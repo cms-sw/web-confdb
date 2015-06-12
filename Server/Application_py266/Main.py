@@ -17,7 +17,7 @@ from operator import attrgetter
  #AddressUser #Module,
 import json
 #from schema import * #PathsSchema, ModuleSchema, ResponseSchema, ParameterSchema, ResponseParamsSchema, ResponsePathsSchema, ResponsePathTreeSchema, PathsTreeSchema, PathsItemSchema, ResponsePathItemsSchema, ResponsePathItemSchema, ResponseParamSchema, ParameterSchema
-from ordereddict import OrderedDict
+from marshmallow.ordereddict import OrderedDict
 from utils import * #Counter, ModulesDict, SequencesDict, PathsDict
 
 #NEW IMPORT
@@ -504,16 +504,16 @@ class Root(object):
     #Get a the list of the stream and the items in it(Dataset and Event content) 
     
 if __name__ == '__main__':
+    # Load configuration
+    from Config import connectUrl, cpconfig, base_url
+
     # Register the SQLAlchemy plugin
     from sqlalchemy_plugin.saplugin import SAEnginePlugin
-    #SAEnginePlugin(cherrypy.engine, 'oracle://cms_hlt_gdr:convertiMi!@(DESCRIPTION = (LOAD_BALANCE=on) (FAILOVER=ON) (ADDRESS = (PROTOCOL = TCP)(HOST = int2r2-s.cern.ch)(PORT = 10121)) (CONNECT_DATA = (SERVER = DEDICATED) (SERVICE_NAME = int2r_nolb.cern.ch)))').subscribe()
-    #'sqlite:///my.db' cmsr.cern.ch
-
-    SAEnginePlugin(cherrypy.engine, 'oracle://user:password@(DESCRIPTION = (LOAD_BALANCE=on) (FAILOVER=ON) (ADDRESS = (PROTOCOL = TCP)(HOST = hostname)(PORT = port)) (CONNECT_DATA = (SERVER = DEDICATED) (SERVICE_NAME = servicename)))').subscribe()
+    SAEnginePlugin(cherrypy.engine, connectUrl).subscribe()
     
     # Register the SQLAlchemy tool
     from sqlalchemy_plugin.satool import SATool
     cherrypy.tools.db = SATool()
-    cherrypy.config.update({'server.socket_host': '0.0.0.0'})
-    cherrypy.quickstart(Root(), '', {'/': {'tools.db.on': True}})
+    cherrypy.config.update(cpconfig)
+    cherrypy.quickstart(Root(), base_url, {'/': {'tools.db.on': True}})
     
