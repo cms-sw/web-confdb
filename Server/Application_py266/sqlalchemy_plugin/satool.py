@@ -19,8 +19,8 @@ class SATool(cherrypy.Tool):
         a requests starts and commits/rollbacks whenever
         the request terminates.
         """
-	self.current_dir = current_dir
-	self.log = log
+        self.current_dir = current_dir
+        self.log = log
         cherrypy.Tool.__init__(self, 'on_start_resource',
                                self.bind_session,
                                priority=20)
@@ -78,12 +78,12 @@ class SATool(cherrypy.Tool):
         if "download" in path_info:
 #            print "FILEPATH: ", cherrypy.request.params['filepath']
             # path = self.current_dir + "/exported/" + cherrypy.request.params['filepath'] + '.py' 
- 	    # folder = os.environ['STATEDIR']
-	    folder = os.environ.get('STATEDIR')
-            path = folder + "/" + cherrypy.request.params['filepath'] + '.py'	       
+            # folder = os.environ['STATEDIR']
+            folder = os.environ.get('STATEDIR')
+            path = folder + "/" + cherrypy.request.params['filepath'] + '.py'          
         if os.path.exists(path):
             #print "nothing"
-	    log_msg = "DELETING FILE: "+path
+            log_msg = "DELETING FILE: "+path
             self.log.error(log_msg)
-	    unlink(path)
+            unlink(path)
 

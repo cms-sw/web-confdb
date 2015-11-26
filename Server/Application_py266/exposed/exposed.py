@@ -2195,7 +2195,7 @@ class Exposed(object):
         else:
             labels_len = len(labels)
         one_values = [1] * labels_len
-	zero_values = [0] * labels_len
+        zero_values = [0] * labels_len
 
         #---- Building streams and datasets
         evcoOut = []
@@ -2259,12 +2259,12 @@ class Exposed(object):
 
                                     else:
                                         values = one_values
-				
+                                
                                     i2 = 0
-				
+                                
                                     sp_value = smart_paths[p.name]
-				                    smpr = "smart_pre" + "###" + str(sp_value)
-				                    pat.values.append(smpr)
+                                    smpr = "smart_pre" + "###" + str(sp_value)
+                                    pat.values.append(smpr)
 
                                     for c in columns:
 
@@ -2285,7 +2285,7 @@ class Exposed(object):
 
                                     paths[pat.gid] = pat
 
-			    # Put The path with prescales 0
+                            # Put The path with prescales 0
                             else:
                                 pat_id = str(d.id) + "pat"
                                 pat = Summaryitem(p.id,(p.name),"pat",True,'resources/Path_3.ico')
