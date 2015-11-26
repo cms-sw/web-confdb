@@ -1,6 +1,5 @@
 # -*- coding: utf-8 -*-
 
-
 from ConfDBAuth.ConfDBAuth import * #connectUrl
 
 cpconfig = {
@@ -16,5 +15,3 @@ cpconfig = {
 #base_url = "/confdb"
 
 base_url = ""
-
-    
