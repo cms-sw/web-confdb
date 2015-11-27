@@ -1429,13 +1429,13 @@ class Root(object):
         output = schema.dump(resp)
         #assert isinstance(output.data, OrderedDict)
 
-        return output.data	
+        return output.data      
 class Download:
 
     def index(self, filepath):
-	# folder = os.environ['STATEDIR']
-	folder = os.environ.get('STATEDIR')
-	x = folder + "/" + filepath + '.py' 
+        # folder = os.environ['STATEDIR']
+        folder = os.environ.get('STATEDIR')
+        x = folder + "/" + filepath + '.py' 
         # x = current_dir + "/exported/" + filepath + '.py' #CHANGED
         return serve_file(x, "application/x-download", "attachment")
     index.exposed = True    
