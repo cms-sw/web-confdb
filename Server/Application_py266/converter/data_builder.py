@@ -990,7 +990,7 @@ class DataBuilder(object):
                 val = '( *(' + template_params.value[1:-1] + ') ),\n'
 
         elif(template_params.paramtype == "VInputTag"):
-            val = "( '" + template_params.value[2:-2] + "' ),\n" if template_params.value[2:-2] != '' else "(  ),\n"
+            val = '( ' + ','.join( "'%s'" % it.strip() for it in template_params.value[2:-2].split(',')) + ' ),\n'
 
         elif (template_params.paramtype == "string"):
             if template_params.value == None or template_params.value == "" or template_params.value == "none" or template_params.value == "None":
