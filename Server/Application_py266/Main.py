@@ -1333,9 +1333,11 @@ class Root(object):
         resp.success = True
         resp.children = []
 
-        config_file_name = self.conv.createConfig(ver, cnf, db, online, self.log, self.configDumpCounter, current_dir)
-        config_path = '/confdb/download/?filepath=' + str(config_file_name)
-        url = UrlString(1,config_path)
+        config_filename = current_dir + '/dump%08d.py' % self.configDumpCounter.getNext()
+        self.conv.createConfig(ver, cnf, db, online, config_filename, use_cherrypy = True)
+        # FIXME need to handle the case where the dump failed
+        config_path = '/confdb/download/?filepath=' + config_filename
+        url = UrlString(1, config_path)
         resp.children.append(url)
         print "Time: ", int(time.time() - now)
 
