@@ -7,12 +7,8 @@
 # as well the Database session
 # Class: Root
 
-import sys
-import logging
-import logging.handlers
 import cherrypy
 import os
-import tempfile
 
 current_dir = os.path.dirname(os.path.abspath(__file__))
 
@@ -278,11 +274,11 @@ class Root(object):
             # id_oum = oumodsMap.get(mid)
             # data = self.funcs.getOUModuleItems(id_oum, db, self.log)
             id_oum = mid
-            data = self.funcs.getOUModuleItems(id_oum, db, src, cherrypy.request, self.log)
+            data = self.funcs.getOUModuleItems(id_oum, db, src, cherrypy.request, verid, self.log)
 
         else:
 
-            data = self.funcs.getModuleItems(mid, db, src, cherrypy.request, allmod, False, self.log)
+            data = self.funcs.getModuleItems(mid, db, src, cherrypy.request, allmod, False, verid, self.log)
             # if (allmod == 'true'):
             #     id_p = allmodsMap.get(mid)
             #     data = self.funcs.getModuleItems(id_p, db, self.log)
@@ -299,10 +295,91 @@ class Root(object):
 
     @cherrypy.expose
     @cherrypy.tools.json_in()
+    def path_move(self):
+        input_json = byteify(cherrypy.request.json)
+        node_id = input_json.get('nodeId')
+        new_parent = input_json.get('newParent')
+        old_parent = input_json.get('oldParent')
+        version = input_json.get('version')
+        cherrypy.response.status = 200
+        try:
+            self.funcs.path_move(node_id, new_parent, old_parent, cherrypy.request, self.log, version)
+        except Exception as e:
+            cherrypy.response.status = 500
+            return '500 ERROR: path_move failed:' + e.args[0]
+
+    @cherrypy.expose
+    @cherrypy.tools.json_in()
+    def dataset_update(self):
+        input_json = byteify(cherrypy.request.json)
+        dataset_id = input_json.get('datasetId')
+        path_ids = input_json.get('pathIds')
+        version = input_json.get('version')
+        cherrypy.response.status = 200
+        try:
+            self.funcs.dataset_update(dataset_id, path_ids, cherrypy.request, self.log, version)
+        except Exception as e:
+            cherrypy.response.status = 500
+            return '500 ERROR: dataset_update failed:' + e.args[0]
+
+    @cherrypy.expose
+    @cherrypy.tools.json_in()
+    def drag_n_drop(self):
+        input_json = byteify(cherrypy.request.json)
+        node_id = input_json.get('nodeId')
+        old_parent = input_json.get('oldParent')
+        new_parent = input_json.get('newParent')
+        order = input_json.get('order')
+        copied = input_json.get('copied')
+        version = input_json.get('version', -2)
+        cherrypy.response.status = 200
+        try:
+            # raise Exception('test exception')
+            if old_parent == new_parent:
+                self.funcs.drag_n_drop_reorder(node_id, old_parent, order, version, cherrypy.request, self.log)
+            else:
+                self.funcs.drag_n_drop(node_id, old_parent, new_parent, order, copied, version, cherrypy.request, self.log)
+        except Exception as e:
+            cherrypy.response.status = 500
+            return '500 ERROR: drag_n_drop failed:' + e.args[0]
+
+    @cherrypy.expose
+    @cherrypy.tools.json_in()
+    @cherrypy.tools.json_out()
+    def add_event_statement(self):
+        input_json = byteify(cherrypy.request.json)
+        internal_id = input_json.get('internal_id')
+        drop_line = input_json.get('drop_line')
+        verid = input_json.get('ver_id')
+        cherrypy.response.status = 200
+        try:
+            return self.funcs.add_event_statement(internal_id, verid, drop_line, cherrypy.request, self.log)
+        except Exception as e:
+            cherrypy.response.status = 500
+            return '500 ERROR: add_event_statement failed:' + e.args[0]
+
+    @cherrypy.expose
+    @cherrypy.tools.json_in()
+    def delete_event_statement(self):
+        input_json = byteify(cherrypy.request.json)
+        internal_id = input_json.get('internal_id')
+        rank = input_json.get('rank')
+        cherrypy.response.status = 200
+        try:
+            # we always keep first line
+            if rank > 0:
+                self.funcs.delete_event_statement(internal_id, rank, cherrypy.request, self.log)
+        except Exception as e:
+            cherrypy.response.status = 500
+            return '500 ERROR: add_event_statement failed:' + e.args[0]
+
+    @cherrypy.expose
+    @cherrypy.tools.json_in()
     @cherrypy.tools.json_out()
     def update_param_val(self):
         input_json = byteify(cherrypy.request.json)
         value = input_json['value']
+        ver = input_json['ver_id']
         mod_id = input_json['modId']
         param_name = input_json['parName']
 
@@ -310,16 +387,121 @@ class Root(object):
         # UPD: TODO: it still might be different from 0, so remove hardcode
         src = 0
 
-        self.funcs.update_module_cache(mod_id, src, param_name, value, cherrypy.request, self.log)
+        self.funcs.update_cached_param(mod_id, src, param_name, value, ver, cherrypy.request, self.log)
         # TODO: remove it, it is stupid. Return something more enhanced
         return input_json
 
+    @cherrypy.expose
+    @cherrypy.tools.json_in()
+    def update_event_statement(self):
+        input_json = byteify(cherrypy.request.json)
+        value = input_json.get('value')
+        column = input_json.get('column')
+        internal_id = input_json.get('internal_id')
+        statementrank = input_json.get('statementrank')
+        verid = input_json.get('ver_id')
 
-    # TODO: replace it with tiny object which has only name
+        # TODO: it still might be different from 0, so remove hardcode
+        src = 0
+        try:
+            self.funcs.update_event_statement(internal_id, statementrank, src, column, value, verid, cherrypy.request, self.log)
+        except Exception as e:
+            cherrypy.response.status = 500
+            return '500 ERROR: update_event_statement failed:' + e.args[0]
+        cherrypy.response.status = 200
+
+    @cherrypy.expose
+    @cherrypy.tools.json_in()
+    def update_streams_event(self):
+        input_json = byteify(cherrypy.request.json)
+        internal_evcon_id = input_json.get('internal_evcon_id')
+        stream_id = input_json.get('stream_id')
+        version_id = input_json.get('version_id')
+        value = None
+        cherrypy.response.status = 200
+        if internal_evcon_id == -1:
+            value = input_json.get('value')
+        try:
+            return str(self.funcs.update_streams_event(stream_id, internal_evcon_id, version_id, value, cherrypy.request, self.log))
+        except Exception as e:
+            cherrypy.response.status = 500
+            return '500 ERROR: update_event_statement failed:' + e.args[0]
+
+    @cherrypy.expose
+    @cherrypy.tools.json_out()
+    def get_service_messages(self, query=""):
+        messages = self.funcs.get_service_messages(self.log, cherrypy.request)
+        return messages
+
     @cherrypy.expose
     @cherrypy.tools.json_out()
     def get_module_names(self, query="", ver = -2, cnf = -2,online = "False"):
-        return self.allmodules(ver=ver, cnf=cnf, online=online)
+        db = None
+        db_online = cherrypy.request.db_online
+        db_offline = cherrypy.request.db_offline
+        src = 0
+        if online == 'file':
+            data = self.par_funcs.get_input_tags_names_from_file(ver, self.config_dict)
+            if (data == None):
+                self.log.error('ERROR: get_module_names - data returned null object')
+                cherrypy.HTTPError(500, "Error in retreiving the input tags names")
+            return data
+        else:
+            if online == 'True' or online == 'true':
+                db = db_online
+                src = 1
+            else:
+                db = db_offline
+        cnf = int(cnf)
+        ver = int(ver)
+        data = self.funcs.get_input_tags_names(cnf, ver, db, self.log, cherrypy.request, src)
+        if (data == None):
+            self.log.error('ERROR: get_module_names - data returned null object')
+            cherrypy.HTTPError(500, "Error in retreiving the input tags names")
+
+        return data
+
+    @cherrypy.expose
+    @cherrypy.tools.json_out()
+    def get_evcon_names(self, query="", ver=-2, online="False"):
+        ver = int(ver)
+        db_online = cherrypy.request.db_online
+        db_offline = cherrypy.request.db_offline
+        if online == 'True' or online == 'true':
+            db = db_online
+            src = 1
+        else:
+            db = db_offline
+            src = 0
+        data = self.funcs.get_evcon_names(ver, self.log, db, cherrypy.request, src)
+        if data is None:
+            self.log.error('ERROR: get_evcon_names - data returned null object')
+            cherrypy.HTTPError(500, "Error in retreiving the evcon tags names")
+        return data
+
+    @cherrypy.expose
+    def save(self, _dc=101, vid=-2, cid=-2, online="False"):
+        db_online = cherrypy.request.db_online
+        db_offline = cherrypy.request.db_offline
+        db = None
+        src = 0
+        if online == 'file':
+            src = 0
+            # data = self.par_funcs.get_input_tags_names_from_file(ver, self.config_dict)
+            # if (data == None):
+            #     self.log.error('ERROR: get_module_names - data returned null object')
+            #     cherrypy.HTTPError(500, "Error in retreiving the input tags names")
+        else:
+            if online == 'True' or online == 'true':
+                db = db_online
+                src = 1
+            else:
+                db = db_offline
+        cid = int(cid)
+        vid = int(vid)
+        changed_version = self.funcs.get_version(cid, vid, db, self.log, cherrypy.request, src)
+        if changed_version is not None:
+            self.funcs.create_new_configuration(changed_version, db, cherrypy.request, self.log, src)
 
     #Get the directories of the DB
 
@@ -543,16 +725,12 @@ class Root(object):
     @cherrypy.expose
     @cherrypy.tools.json_out()
     def allsrvitems(self, _dc = 101, node = 1, sid = -2,online = "False", verid = -1):
-#        db = cherrypy.request.db
-
-        db = None
         db_online = cherrypy.request.db_online
         db_offline = cherrypy.request.db_offline
-        srvsMap = None
         src = 0
 
         if online == 'file':
-            data = self.par_funcs.getServiceItemsFromFile(verid, int(sid), self.config_dict)
+            data = self.par_funcs.getServiceItemsFromFile(verid, sid, self.config_dict)
             if (data == None):
                 self.log.error('ERROR: allsrvitems - data returned null object')
                 cherrypy.HTTPError(500, "Error in retreiving the Service Parameters")
@@ -561,21 +739,13 @@ class Root(object):
         else:
             if online == 'True' or online == 'true':
                 db = db_online
-                # srvsMap = self.srvsMap_online
                 src = 1
 
             else:
                 db = db_offline
-                # srvsMap = self.srvsMap
-                src = 0
 
-            sid = int(sid)
-
-            # id_s = srvsMap.get(sid)
-            # data = self.funcs.getServiceItems(id_s, db, self.log)
-            data = self.funcs.getServiceItems(sid, db, self.log, src, cherrypy.request)
+            data = self.funcs.getServiceItems(sid, db, self.log, src, cherrypy.request, verid)
             if (data == None):
-    #            print ("Exception - Error")
                 self.log.error('ERROR: allsrvitems - data returned null object')
                 cherrypy.HTTPError(500, "Error in retreiving the Service Parameters")
 
@@ -677,7 +847,7 @@ class Root(object):
 	self.log.error('EVC: ')
 	self.log.error(str(evc))		
 
-        data = self.funcs.getEvcStatements(evc, db, self.log, cherrypy.request, src)
+        data = self.funcs.getEvcStatements(evc, verid, db, self.log, cherrypy.request, src)
         if (data == None):
             # print ("Exception - Error")
             self.log.error('ERROR: evcostatements - data returned null object')
@@ -807,7 +977,7 @@ class Root(object):
 
         mid = int(mid)
 
-        data = self.funcs.getESModItems(mid,db, src, self.log, cherrypy.request)
+        data = self.funcs.getESModItems(mid,db, src, self.log, cherrypy.request, verid)
         if (data == None):
 #            print ("Exception - Error")
             self.log.error('ERROR: allesmoditems - data returned null object')
@@ -879,7 +1049,7 @@ class Root(object):
         data = None
       
         # data = self.funcs.getModuleItems(mid, db, self.log)
-        data = self.funcs.getModuleItems(mid, db, src, cherrypy.request, "false", fromSequence, self.log)
+        data = self.funcs.getModuleItems(mid, db, src, cherrypy.request, "false", fromSequence, verid, self.log)
 
         
         if (data == None):
@@ -1091,7 +1261,7 @@ class Root(object):
 
     @cherrypy.expose
     @cherrypy.tools.json_out()
-    def allgpsetitems(self, _dc = 101, node = 1, gid = -2, verid = -1, online = "False"):
+    def allgpsetitems(self, _dc = 101, node = 1, set_id = -2, verid = -1, online = "False"):
 #        db = cherrypy.request.db
 
         db = None
@@ -1102,7 +1272,7 @@ class Root(object):
         gpsMap = None
 
         if online == 'file':
-            data = self.par_funcs.getGPsetsItemsFromFile(verid, int(gid), self.config_dict)
+            data = self.par_funcs.getGPsetsItemsFromFile(verid, set_id, self.config_dict)
             if (data == None):
                 self.log.error('ERROR: allgpsetitems - data returned null object')
                 cherrypy.HTTPError(500, "Error in retreiving the Global PSet Parameters")
@@ -1120,11 +1290,7 @@ class Root(object):
                 gpsMap = self.gpsMap
                 src = 0
 
-        gid = int(gid)
-
-        # id_s = gpsMap.get(gid)
-        # data = self.funcs.getGpsetItems(id_s, db, self.log)
-        data = self.funcs.getGpsetItems(gid, db, self.log, cherrypy.request, src)
+        data = self.funcs.getGpsetItems(set_id, db, self.log, cherrypy.request, verid, src)
         if (data == None):
 #            print ("Exception - Error")
             self.log.error('ERROR: allgpsetitems - data returned null object')
@@ -1205,7 +1371,7 @@ class Root(object):
 
         mid = int(mid)
 
-        data = self.funcs.getEDSourceItems(mid, db, src, self.log, cherrypy.request)
+        data = self.funcs.getEDSourceItems(mid, db, src, self.log, cherrypy.request, verid)
         if (data == None):
 #            print ("Exception - Error")
             self.log.error('ERROR: data returned null object')
@@ -1283,7 +1449,7 @@ class Root(object):
                 db = db_offline
             mid = int(mid)
 
-            data = self.funcs.getESSourceItems(mid, db, src, self.log, cherrypy.request)
+            data = self.funcs.getESSourceItems(mid, db, src, self.log, cherrypy.request, verid)
             if (data == None):
     #            print ("Exception - Error")
                 self.log.error('ERROR: allessourceitems - data returned null object')

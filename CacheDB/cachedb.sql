@@ -108,17 +108,35 @@ $$ LANGUAGE plpgsql;
 
 
 --
--- For all the modules, caching whole object as json.
+-- For all the params, caching whole object as json.
 --
-CREATE TABLE params_cache (id SERIAL PRIMARY KEY, data JSON);
+CREATE TABLE params_cache (id SERIAL PRIMARY KEY, data JSON, version_id BIGINT, changed BOOLEAN);
 
+CREATE TABLE endpaths_cache (version_id SERIAL PRIMARY KEY, data JSON);
+
+CREATE TABLE path_items_cache (path_item_id SERIAL PRIMARY KEY, data JSON);
+
+CREATE TABLE path_items_hierarchy (parent_id BIGINT, child_id BIGINT, child_order INTEGER, changed BOOLEAN, version_id BIGINT, PRIMARY KEY (parent_id, child_id, version_id));
+
+CREATE TABLE modules_names_cache (version_id SERIAL PRIMARY KEY, names text[]);
 --
 -- For mapping external (oracle) and internal entities' ids
 --
-CREATE TABLE ext2int_id_mapping (internal_id SERIAL PRIMARY KEY, external_id INTEGER, itemtype text, source INTEGER);
+CREATE TABLE ext2int_id_mapping (internal_id SERIAL PRIMARY KEY, external_id BIGINT, itemtype text, source INTEGER);
 
+CREATE TABLE event_statements_cache (statement_id BIGINT, statement_rank BIGINT, data JSON, version_id BIGINT, PRIMARY KEY (statement_id, statement_rank, version_id));
 
-CREATE or REPLACE FUNCTION getClientMappings(integer, text, text) RETURNS text[] AS $$
+CREATE TABLE stream_event_hierarchy (stream_id BIGINT, event_id BIGINT, ver_id BIGINT,  PRIMARY KEY (stream_id, event_id, ver_id));
+
+CREATE TABLE event_configs_names_cache (event_id BIGINT, name text, ver_id BIGINT,  PRIMARY KEY (event_id, ver_id));
+
+CREATE TABLE paths_cache (path_id BIGINT, name text, is_endpath INTEGER, data JSON, version_id BIGINT, PRIMARY KEY (path_id, version_id));
+
+CREATE TABLE paths2datasets_relation (dataset_id BIGINT, path_ids BIGINT[], ver_id BIGINT, PRIMARY KEY (dataset_id, ver_id));
+
+CREATE TABLE service_messages (id SERIAL PRIMARY KEY, due_date BIGINT, message text);
+
+CREATE or REPLACE FUNCTION getClientMappings(BIGINT, text, text) RETURNS text[] AS $$
 DECLARE
     external_id ALIAS FOR $1;
     tabl ALIAS FOR $2;

@@ -1,7 +1,7 @@
 
 Ext.define("CmsConfigExplorer.view.path.Path",{
     extend: "Ext.panel.Panel",
-    
+
     requires:['CmsConfigExplorer.view.param.Parameters',
              'CmsConfigExplorer.view.path.Pathtree',
              'CmsConfigExplorer.view.path.ModuleDetails',
@@ -9,21 +9,22 @@ Ext.define("CmsConfigExplorer.view.path.Path",{
              'CmsConfigExplorer.view.path.PathController',
               'CmsConfigExplorer.view.path.PathModel'
              ],
-    
+
     alias:'widget.pathtab',
-    
+
     reference: "pathtab",
-    
+
     controller: "path-path",
     viewModel: {
         type: "path-path"
     },
-    
+
     listeners:{
         cusDetailsClick: 'onDetailsRender',
-        scope: 'controller'
+        scope: 'controller',
+        updateAllNodes: 'updateAllNodes'
     }
-    
+
     ,layout: {
         type: 'border'
     },
@@ -31,7 +32,7 @@ Ext.define("CmsConfigExplorer.view.path.Path",{
 //    listeners:{
 //        custSetVerId: 'onSetVerId'
 //    },
-    
+
     items: [
 //        {
 //            xtype: 'toolbar',
@@ -64,19 +65,24 @@ Ext.define("CmsConfigExplorer.view.path.Path",{
     //        collapsible: true,
 //            loadMask: true,
             viewConfig: {
-                loadingHeight: 100
+                loadingHeight: 100,
+                plugins: {
+                    ptype: 'treeviewdragdrop',
+                    dragText: 'Drag and drop to reorganize'
+                },
+                listeners: {
+                    beforedrop: 'beforedrop'
+                }
             },
             listeners:{
                 cusPathColumnNameHeaderClickForward: 'onPathColumnNameHeaderClickForward',
                 rowclick: 'onNodeClick',
                 custModParams: 'onModParamsForward',
                 cusAlphaOrderClickForward: 'onSortAlphaPaths',
-                cusOrigOrderClickForward: 'onSortOriginalPaths'
-//                custPatDet: 'onPatDetForward',
-//                render: 'onRender',
-//                beforeshow: 'onRender'
-                //scope: 'controller'
-        }
+                cusOrigOrderClickForward: 'onSortOriginalPaths',
+                onBeforeDrop: 'beforedrop',
+                viewready: 'addBeforeDragListener'
+            }
 
     },
     {
@@ -86,12 +92,12 @@ Ext.define("CmsConfigExplorer.view.path.Path",{
         header: false,
         split: true,
         height: '100%',
-        
+
         layout:{
             type:  'card'
 //            align: 'stretch'
         },
-        
+
         items:[
             {
                 xtype: 'container',
@@ -117,41 +123,21 @@ Ext.define("CmsConfigExplorer.view.path.Path",{
         //                width: '100%',
                         height: '75%'
                     }
-                    
+
                 ]
-                
+
             },
-            {            
+            {
                 xtype: 'pathdetails',
 //                hidden: true,
                 split: true,
                 title: 'Path Details',
-                height: '100%'          
+                height: '100%'
             }
         ]
-        
-    }    
+
+    }
     ]
 
 });
 
-
-
-
-
-//{
-//        region: 'center',
-//        collapsible: true,
-//        xtype: 'moduledetails',
-//        width: '100%',
-//        height: '25%'
-//    },{
-//        region: 'south',
-////        layout: 'fit',
-//        xtype: 'parameters',
-//        split: true,
-//        height: '100%',
-//        width: '50%',
-//        loadMask: true
-//        
-//    }

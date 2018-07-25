@@ -3,6 +3,7 @@
 # to retrieve records from the ConfDb
 #
 # Class: ConfDbQueries
+from collections import OrderedDict
 
 from sqlalchemy import *
 from sqlalchemy.orm import *
@@ -54,6 +55,28 @@ class ConfDbQueries(object):
                                                         + "and u_pathid2conf.id_confver=:leng "
                                                         + "order by u_pathid2pae.id ")).params(node=id_pathid,
                                                                                                leng=id_version)
+        results = query.all()
+        return results
+
+    @staticmethod
+    def get_conf_pathitems(id_version, db, log):
+        if id_version == -2 or db is None:
+            log.error('ERROR: getConfPathItems - input parameters error')
+
+        query = db.query(Pathitems).from_statement(text("SELECT "
+                                                        + "u_pathid2pae.id, "
+                                                        + "u_pathid2pae.id_pathid, "
+                                                        + "u_pathid2pae.id_pae, "
+                                                        + "u_pathid2pae.id_parent,"
+                                                        + "u_pathid2pae.lvl, "
+                                                        + "u_pathid2pae.ord, "
+                                                        + "u_pathid2pae.operator "
+                                                        + "FROM u_pathid2pae, u_paelements, u_pathid2conf  "
+                                                        + "WHERE u_pathid2conf.id_pathid=u_pathid2pae.id_pathid "
+                                                        + "and u_pathid2pae.id_pae=u_paelements.id "
+                                                        + "and u_pathid2conf.id_confver=:ver "
+                                                        + "order by u_pathid2pae.id ")).params(ver=id_version)
+
         results = query.all()
         return results
 
@@ -149,7 +172,7 @@ class ConfDbQueries(object):
             log.error('ERROR: getStreamid - input parameters error')
 
         stid = db.query(StreamId).from_statement(text("SELECT DISTINCT "
-                                                      + "u_streamids.id, u_streamids.id_stream "
+                                                      + "u_streamids.id, u_streamids.id_stream, u_streamids.streamid, u_streamids.fractodisk "
                                                       + "FROM u_streamids "
                                                       + "WHERE u_streamids.id=:node ")).params(node=id_streamid).first()
 
@@ -340,6 +363,24 @@ class ConfDbQueries(object):
         return items
 
 
+
+    def get_mod2param_by_ver(self, id_ver, db, log):
+
+        if (db == None or id_ver == None):
+            log.error('ERROR: getMod2TempByVer - input parameters error')
+
+        mod2temps = db.query(Moduleitem).from_statement(
+            text("SELECT UNIQUE u_pae2moe.id, u_pae2moe.id_pae, u_pae2moe.id_moe, u_pae2moe.lvl, u_pae2moe.ord "
+                 + "FROM u_pathid2pae, u_paelements, u_pathid2conf, u_pae2moe "
+                 + "WHERE u_pathid2conf.id_pathid=u_pathid2pae.id_pathid "
+                 + "and u_pathid2pae.id_pae=u_paelements.id "
+                 + "and u_paelements.paetype=1 "
+                 + "and u_pae2moe.id_pae=u_paelements.id "
+                 + "and u_pathid2conf.id_confver=:ver")).params(ver=id_ver).all()
+
+        return mod2temps
+
+
     def getModuleParamItemsOne(self, id_pae, db, log):
 
         if (id_pae == -2 or db == None):
@@ -371,12 +412,12 @@ class ConfDbQueries(object):
         return elements
 
 
-    def getModuleParamElements(self, moeIds, db, log):
+    def getModuleParamElements(self, moeId, db, log):
 
-        if (moeIds==None or db == None):
+        if (moeId==None or db == None):
                 log.error('ERROR: getModuleParamElements - input parameters error')
 
-        elements = db.query(Modelement).filter(Modelement.id.in_(moeIds)).order_by(Modelement.id).all()
+        elements = db.query(Modelement).filter(Modelement.id == moeId).order_by(Modelement.id).all()
 
         return elements
 
@@ -489,10 +530,10 @@ class ConfDbQueries(object):
 
         return element
 
-    def getConfPaelements(self, id_ver, db, log):
+    def getConfModules(self, id_ver, db, log):
 
         if (db == None or id_ver == -2):
-            log.error('ERROR: getConfPaelements - input parameters error')
+            log.error('ERROR: getConfModules - input parameters error')
 
         elements = db.query(Pathelement).from_statement(text("SELECT UNIQUE u_paelements.id, u_paelements.name "
                                                              + "FROM u_pathid2pae, u_paelements, u_pathid2conf "  # , u_mod2templ
@@ -503,6 +544,18 @@ class ConfDbQueries(object):
                                                              + "and u_pathid2conf.id_confver=:ver order by u_paelements.name")).params(
             ver=id_ver).all()
 
+        return elements
+
+    @staticmethod
+    def get_conf_paelements(id_ver, db, log):
+        if db is None or id_ver == -2:
+            log.error('ERROR: getConfModules - input parameters error')
+        elements = db.query(Pathelement).from_statement(text("SELECT UNIQUE u_paelements.id, u_paelements.name, u_paelements.paetype "
+                                                             + "FROM u_pathid2pae, u_paelements, u_pathid2conf "
+                                                             + "WHERE u_pathid2conf.id_pathid=u_pathid2pae.id_pathid "
+                                                             + "and u_pathid2pae.id_pae=u_paelements.id "
+                                                             + "and u_pathid2conf.id_confver=:ver order by u_paelements.name")
+                                                        ).params(ver=id_ver).all()
         return elements
 
     def getRelTemplates(self, id_rel, db, log):
@@ -624,7 +677,7 @@ class ConfDbQueries(object):
         if (db == None or ver == -2):
             log.error('ERROR: getConfStreams - input parameters error')
 
-        streams = db.query(StreamId).from_statement(text("SELECT DISTINCT u_streamids.id, u_streamids.id_stream "
+        streams = db.query(StreamId).from_statement(text("SELECT DISTINCT u_streamids.id, u_streamids.id_stream, u_streamids.streamid, u_streamids.fractodisk "
                                                          + "FROM u_conf2strdst, u_streamids "
                                                          + "WHERE u_streamids.id=u_conf2strdst.id_streamid "
                                                          + "and u_conf2strdst.id_confver=:ver ")).params(ver=ver).all()
@@ -636,7 +689,7 @@ class ConfDbQueries(object):
         if (db == None or ver == -2):
             log.error('ERROR: getConfDatasets - input parameters error')
 
-        datasets = db.query(DatasetId).from_statement(text("SELECT DISTINCT u_datasetids.id, u_datasetids.id_dataset "
+        datasets = db.query(DatasetId).from_statement(text("SELECT DISTINCT u_datasetids.id, u_datasetids.id_dataset, u_datasetids.datasetid "
                                                            + "FROM u_conf2strdst, u_datasetids "
                                                            + "WHERE u_datasetids.id=u_conf2strdst.id_datasetid "
                                                            + "and u_conf2strdst.id_confver=:ver ")).params(
@@ -682,6 +735,29 @@ class ConfDbQueries(object):
                  + "and U_CONF2EVCO.id_confver=:ver")).params(ver=ver).all()
 
         return evcontents
+
+    def getEventContentIdByName(self, name, db, log):
+
+        if (db is None or name is None):
+            log.error('ERROR: getEventContentByName - input parameters error')
+        evcontent = db.query(EventContentId).from_statement(
+            text("select u_eventcontentids.id , u_eventcontentids.id_evco "
+                 + "from u_eventcontentids, u_eventcontents "
+                 + "where u_eventcontents.id=u_eventcontentids.id_evco "
+                 + "and u_eventcontents.name=:name")).params(name=name).first()
+        return evcontent
+
+    @staticmethod
+    def get_conf2evco_rels(ver, db, log):
+        if (db == None or ver == -2):
+            log.error('ERROR: getConfToEvCoRels - input parameters error')
+
+        rels = db.query(ConfToEvCo).from_statement(text(
+            "SELECT DISTINCT u_conf2evco.id, u_conf2evco.id_confver, u_conf2evco.id_evcoid "
+            + "FROM u_conf2evco "
+            + "WHERE u_conf2evco.id_confver =:ver ")).params(ver=ver).all()
+
+        return rels
 
     def getEvCoToStream(self, ver, db, log):
 
@@ -870,6 +946,18 @@ class ConfDbQueries(object):
 
         return elements
 
+    def get_conf2GPSets_relations(self, id_ver, db, log):
+
+        if (db == None or id_ver == -2):
+            log.error('ERROR: getConf2GPSetsRel - input parameters error')
+
+        conf2gpsets = db.query(Conf2Gpset).from_statement(
+            text(" SELECT u_conf2gpset.id, u_conf2gpset.id_gpset, u_conf2gpset.ord "
+                 + "FROM u_conf2gpset "
+                 + "WHERE u_conf2gpset.id_confver =:ver ")).params(ver=id_ver).all()
+
+        return conf2gpsets
+
     def getGpsetElements(self, gpsId, db, log):
 
         if (gpsId == None or db == None):
@@ -1048,10 +1136,15 @@ class ConfDbQueries(object):
         if (db == None or ver == -2 or idis == None):
             log.error('ERROR: getAllDatsPatsRels - input parameters error')
 
-        # dprels = db.query(PathidToStrDst).filter(PathidToStrDst.id_datasetid.in_(idis)).all()
-        dprels = db.query(func.max(PathidToStrDst.id), PathidToStrDst.id_datasetid, PathidToStrDst.id_pathid).filter(
-            PathidToStrDst.id_datasetid.in_(idis)).group_by(PathidToStrDst.id_datasetid, PathidToStrDst.id_pathid).all()
-
+        # TODO: refactor it to sqlalchemy ORM, if possible
+        ids_str = '(' + ', '.join(str(x) for x in idis) + ')'
+        dprels = db.query(PathidToStrDst).from_statement(
+            text(
+                "SELECT DISTINCT u_pathid2strdst.id, u_pathid2strdst.id_datasetid, u_pathid2strdst.id_pathid, u_pathid2strdst.id_streamid "
+                + "FROM u_pathid2strdst INNER JOIN ("
+                + " SELECT MAX(u_pathid2strdst.id) maxid, u_pathid2strdst.id_datasetid, u_pathid2strdst.id_pathid "
+                + " FROM u_pathid2strdst WHERE u_pathid2strdst.id_datasetid IN " + ids_str + " GROUP BY u_pathid2strdst.id_datasetid, u_pathid2strdst.id_pathid ORDER BY u_pathid2strdst.id) maxId "
+                + "ON u_pathid2strdst.id = maxId.maxid ORDER BY u_pathid2strdst.id")).all()
         return dprels
 
     def getL1SeedsPathItems(self, idis, db, log):
@@ -1269,3 +1362,131 @@ class ConfDbQueries(object):
         print "RESULT CNF: " + str(conf)
 
         return conf.id
+
+    def save_version(self, version, db=None, log=None):
+        if db is None or version is None:
+            log.error('ERROR: save_version - input parameters error')
+        db.query(Version).filter_by(creator='admin').delete()
+        return self.save_obj(version, db, log)
+
+    def save_get_id_mapping(self, obj_array, db=None, log=None):
+        old2new = OrderedDict()
+        if db is None or obj_array is None:
+            log.error('ERROR: save_get_id_mapping - input parameters error')
+        else:
+            for obj in obj_array:
+                tmp_old_id = obj.id
+                self.detach_obj_from_session(obj, db, log)
+                db.add(obj)
+                db.flush()
+                old2new[tmp_old_id] = obj.id
+        return old2new
+
+    @staticmethod
+    def save_obj(obj, db=None, log=None):
+        if db is None or obj is None:
+            log.error('ERROR: save_obj - input parameters error')
+            return None
+        else:
+            db.add(obj)
+            db.flush()
+            return obj
+
+    @staticmethod
+    def save_objects(obj_array, db=None, log=None):
+        if db is None or obj_array is None:
+            log.error('ERROR: save_and_detach_objects - input parameters error')
+        else:
+            db.bulk_save_objects(obj_array)
+
+    @staticmethod
+    def detach_obj_from_session(obj, db=None, log=None):
+        if db is None or obj is None:
+            log.error('ERROR: detach_obj_from_session - input parameters error')
+        else:
+            obj.id = None
+            db.expunge(obj)
+            make_transient(obj)
+
+    def detach_objects_from_session(self, obj_array, db=None, log=None):
+        if db is None or obj_array is None:
+            log.error('ERROR: detach_objects_from_session - input parameters error')
+        else:
+            for obj in obj_array:
+                self.detach_obj_from_session(obj, db, log)
+
+    @staticmethod
+    def map_basic_elem(changed_param, class_name):
+        save = eval(class_name)()
+        save.name = changed_param.name
+        save.moetype = changed_param.moetype
+        save.paramtype = changed_param.paramtype
+        save.value = changed_param.value
+        if hasattr(changed_param, "valuelob"):
+            save.valuelob = changed_param.valuelob
+        save.tracked = changed_param.tracked
+        save.lvl = changed_param.lvl
+        save.order = changed_param.order
+        if hasattr(changed_param, "hex"):
+            save.hex = changed_param.hex
+        return save
+
+    @staticmethod
+    def create_pathitem(id_pae, id_parent, id_pathid):
+        new_path2pae = Pathitems()
+        new_path2pae.id_pae = id_pae
+        new_path2pae.id_parent = id_parent
+        new_path2pae.id_pathid = id_pathid
+        new_path2pae.operator = 0
+        return new_path2pae
+
+    @staticmethod
+    def create_moduleitem(id_pae, id_moe, lvl, order):
+        new_pae2moe = Moduleitem()
+        new_pae2moe.id_pae = id_pae
+        new_pae2moe.id_moe = id_moe
+        new_pae2moe.lvl = lvl
+        new_pae2moe.order = order
+        return new_pae2moe
+
+    @staticmethod
+    def create_conf2evco(id_evcoid, confver_id):
+        new_conf2evco = ConfToEvCo()
+        new_conf2evco.id_evcoid = id_evcoid
+        new_conf2evco.id_confver = confver_id
+        return new_conf2evco
+
+    @staticmethod
+    def create_event_content_id(id_evco):
+        evcoid_with_name = EventContentId()
+        evcoid_with_name.id_evco = id_evco
+        return evcoid_with_name
+
+    @staticmethod
+    def create_event_content(name):
+        new_evco = EventContent()
+        new_evco.name = name
+        return new_evco
+
+    @staticmethod
+    def create_evc2stat(evc_id, statement_id, statementrank):
+        evc2stat = EvCoToStat()
+        evc2stat.statementrank = statementrank
+        evc2stat.id_stat = statement_id
+        evc2stat.id_evcoid = evc_id
+        return evc2stat
+
+    @staticmethod
+    def create_path2strDataset(dataset_id, path_id):
+        new_rel = PathidToStrDst()
+        new_rel.id_datasetid = dataset_id
+        new_rel.id_pathid = path_id
+        return new_rel
+
+    @staticmethod
+    def create_conf2Srv(id_confver, id_service, order):
+        return Conf2Srv(id_confver=id_confver, id_service=id_service, order=order)
+
+    @staticmethod
+    def create_pathidconf(id_confver, id_pathid, order):
+        return Pathidconf(id_confver=id_confver, id_pathid=id_pathid, order=order)

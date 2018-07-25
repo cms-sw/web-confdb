@@ -44,7 +44,7 @@ class ModToTemp(Base):
      # nome della tabella
     __tablename__ = 'u_mod2templ'
 
-    id = Column('id', Integer, primary_key=True)
+    id = Column('id', Integer, primary_key=True, autoincrement=True)
     id_pae = Column('id_pae', Integer, ForeignKey('u_paelements.id'))
     id_templ = Column('id_templ', Integer, ForeignKey('u_moduletemplates.id'))
 
@@ -55,6 +55,7 @@ class Pathidconf(Base):
     id = Column('id', Integer, primary_key=True)
     id_confver = Column(ForeignKey('u_confversions.id'))
     id_pathid = Column(ForeignKey('u_pathids.id'))
+    order = Column('ord', Integer)
 
 class Paths(Base):
     # nome della tabella
@@ -68,9 +69,8 @@ class Pathids(Base):
     # nome della tabella
     __tablename__ = 'u_pathids'
 
-    id = Column('id', Integer, primary_key=True)
+    id = Column('id', Integer, primary_key=True, autoincrement=True)
     id_path = Column(ForeignKey('u_paths.id'))
-    #isendpath = Column(Integer
     description = Column(CLOB)
     name = column_property(
         select([Paths.name]).where(Paths.id == id_path)
@@ -82,7 +82,7 @@ class Pathelement(Base):
     # nome della tabella
     __tablename__ = 'u_paelements'
 
-    id = Column('id', Integer, primary_key=True)
+    id = Column('id', Integer, primary_key=True, autoincrement=True)
     name = Column(String)
     paetype = Column(Integer)
     id_templ = column_property(
@@ -100,7 +100,7 @@ class PathelementFull(Base):
     # nome della tabella
     __tablename__ = 'u_paelements, u_mod2templ, u_moduletemplates, u_moduletypes'
 
-    id        = Column('id', Integer, primary_key=True)
+    id        = Column('id', Integer, primary_key=True, autoincrement=True)
     name      = Column(String)
     paetype   = Column(Integer)
     id_templ  = Column(Integer)
@@ -111,7 +111,7 @@ class PathelementFull(Base):
 class Pathitems(Base):
     __tablename__ = 'u_pathid2pae'
 
-    id = Column('id', Integer, primary_key=True)
+    id = Column('id', Integer, primary_key=True, autoincrement=True)
     id_pathid = Column(Integer, ForeignKey('u_pathids.id'))
     id_pae = Column('id_pae', Integer, ForeignKey('u_paelements.id'))
     id_parent = Column(Integer)
@@ -166,7 +166,7 @@ class Modelement(Base):
      # nome della tabella
     __tablename__ = 'u_moelements'
 
-    id = Column('id', Integer, primary_key=True)
+    id = Column('id', Integer, primary_key=True, autoincrement=True)
     name = Column(String)
     moetype = Column(Integer)
     paramtype = Column(String)
@@ -178,7 +178,7 @@ class Moduleitem(Base):
      # nome della tabella
     __tablename__ = 'u_pae2moe'
 
-    id = Column('id', Integer, primary_key=True)
+    id = Column('id', Integer, primary_key=True, autoincrement=True)
     id_pae = Column('id_pae', Integer, ForeignKey('u_paelements.id'))
     id_moe = Column('id_moe', Integer, ForeignKey('u_moelements.id'))
     lvl = Column(Integer)
@@ -266,7 +266,7 @@ class Version(Base):
     # nome della tabella
     __tablename__ = 'u_confversions'
     # definisco che id \'e un numero intero in sequenza e chiave primaria
-    id = Column('id', Integer, primary_key=True)
+    id = Column('id', Integer, primary_key=True, autoincrement=True)
     id_config = Column('id_config', Integer, ForeignKey('u_configurations.id'))
     id_parentdir = Column('id_parentdir', Integer, ForeignKey('u_directories.id'))
     name = Column(String)
@@ -287,7 +287,7 @@ class Version(Base):
 class SrvTemplate(Base):
     __tablename__ = 'u_srvtemplates'
 
-    id = Column('id', Integer, primary_key=True)
+    id = Column('id', Integer, primary_key=True, autoincrement=True)
     name = Column(String)
 
 
@@ -316,15 +316,16 @@ class SrvTempElement(Base):
 class Service(Base):
     __tablename__ = 'u_services'
 
-    id = Column('id', Integer, primary_key=True)
+    id = Column('id', Integer, primary_key=True, autoincrement=True)
     id_template = Column('id_template', Integer, ForeignKey('u_srvtemplates.id'))
 
 class Conf2Srv(Base):
     __tablename__ = 'u_conf2srv'
 
-    id = Column('id', Integer, primary_key=True)
+    id = Column('id', Integer, primary_key=True, autoincrement=True)
     id_confver = Column('id_confver', Integer, ForeignKey('u_confversions.id'))
     id_service = Column('id_service', Integer, ForeignKey('u_services.id'))
+    order = Column('ord', Integer)
 
 class SrvElement(Base):
     __tablename__ = 'u_srvelements'
@@ -353,9 +354,10 @@ class Stream(Base):
 class StreamId(Base):
     __tablename__ = 'u_streamids'
 
-    id = Column('id', Integer, primary_key=True)
+    id = Column('id', Integer, primary_key=True, autoincrement=True)
     id_stream = Column('id_stream', Integer, ForeignKey('u_streams.id'))
-    fractodisk = Column(Integer)
+    fractodisk = Column('fractodisk', Integer)
+    streamid = Column('streamid', Integer)
     name = column_property(
         select([Stream.name]).where(Stream.id == id_stream)
     )
@@ -380,6 +382,7 @@ class DatasetId(Base):
 
     id = Column('id', Integer, primary_key=True)
     id_dataset = Column('id_dataset', Integer, ForeignKey('u_datasets.id'))
+    datasetid = Column('datasetid', Integer)
     name = column_property(
         select([Dataset.name]).where(Dataset.id == id_dataset)
     )
@@ -387,7 +390,7 @@ class DatasetId(Base):
 class PathidToStrDst(Base):
     __tablename__ = 'u_pathid2strdst'
 
-    id = Column('id', Integer, primary_key=True)
+    id = Column('id', Integer, primary_key=True, autoincrement=True)
     id_pathid = Column(Integer, ForeignKey('u_pathids.id'))
     id_streamid = Column('id_streamid', Integer, ForeignKey('u_streamids.id'))
     id_datasetid = Column('id_datasetid', Integer, ForeignKey('u_datasetids.id'))

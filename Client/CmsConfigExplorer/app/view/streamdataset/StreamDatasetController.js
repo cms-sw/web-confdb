@@ -1,7 +1,36 @@
+Ext.define('EvcoName', {
+    extend: 'Ext.data.Model',
+
+    fields: [
+        {name: 'internal_id', type: 'string'},
+        {name: 'name', type: 'string'}
+    ]
+
+});
+
+var evcoNames = Ext.create('Ext.data.Store', {
+    model: 'EvcoName',
+    autoLoad: false,
+    proxy: {
+        type: 'ajax',
+        url: 'get_evcon_names',
+        limitParam: '',
+        pageParam: '',
+        sortParam: '',
+        startParam: '',
+        noCache: false,
+        headers: {'Content-Type': "application/json"},
+        reader: {
+            type: 'json',
+            rootProperty: 'children'
+        }
+    }
+});
+
 Ext.define('CmsConfigExplorer.view.streamdataset.StreamDatasetController', {
     extend: 'Ext.app.ViewController',
     alias: 'controller.streamdataset-streamdataset',
-    
+
     
     onStreamitemClick: function(v, record, tr, rowIndex, e, eOpts){
         
@@ -22,7 +51,7 @@ Ext.define('CmsConfigExplorer.view.streamdataset.StreamDatasetController', {
             
             centralLayout.setActiveItem(0);
             Ext.resumeLayouts(true);
-            var dstid = record.get("gid");
+            var dstid = record.get("internal_id");
             var name = record.get("name");
             
             this.getViewModel().set("current_dat",name);
@@ -60,7 +89,7 @@ Ext.define('CmsConfigExplorer.view.streamdataset.StreamDatasetController', {
         }
         else if(item_type == "evc"){
 
-            var strid = record.get("gid");
+            var strid = record.get("internal_id");
             var name = record.get("name");
             
             this.getViewModel().set("current_evc",name);
@@ -97,7 +126,10 @@ Ext.define('CmsConfigExplorer.view.streamdataset.StreamDatasetController', {
             //console.log("ID CONF VER ERRORRRR");
         }
 //        this.getViewModel().getStore('pathitems').getRoot().expand()
-        
+
+        if (idv !== -1) {
+            evcoNames.load({params: {ver: vid, online: online}});
+        }
         
     },
     

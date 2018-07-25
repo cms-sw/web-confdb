@@ -5,6 +5,7 @@
 # Class: Exposed
 import json
 
+import datetime
 from confdb_v2.queries import ConfDbQueries
 from cachedb.queries import CacheDbQueries
 from item_wrappers.FolderItem import *
@@ -14,8 +15,7 @@ from item_wrappers.Parameter import *
 from item_wrappers.item_wrappers import *
 from schemas.responseSchemas import *
 from responses.responses import *
-from marshmallow import Schema, fields, pprint
-from marshmallow.ordereddict import OrderedDict
+
 from params_builder import ParamsBuilder
 from summary_builder import SummaryBuilder
 import string
@@ -37,21 +37,12 @@ class Exposed(object):
 
     def getPathSequenceChildren(self, counter, written_sequences, items, elements_dict, level, built_sequences, src, cache_session, log):
         children = []
-        queries = self.queries
         cache = self.cache
 
         while(counter < len(items) and items[counter].lvl == level):
             elem = elements_dict[items[counter].id_pae]
-            item = Pathitem(items[counter].id_pae, elem.name, items[counter].id_pathid, elem.paetype, items[counter].id_parent, items[counter].lvl, items[counter].order, items[counter].operator)
-
-            # item.gid = seqsMap.put(idgen,elem,items[counter].id_pathid,items[counter].order,items[counter].lvl,items[counter].id)
-            # item.gid = seqsMap.put(elem,items[counter].id_pathid,items[counter].order,items[counter].lvl)
-            if elem.paetype == 1:
-                # item.gid = modsMap.put(elem, items[counter].id_pathid, items[counter].order, items[counter].lvl)
-                item.gid = cache.patMappingDictPut(src, items[counter].id_pae, "mod", cache_session, log, 0)
-            elif elem.paetype == 2:        
-                # item.gid = seqsMap.put(elem,items[counter].id_pathid,items[counter].order,items[counter].lvl)
-                item.gid = cache.patMappingDictPut(src, items[counter].id_pae, "seq", cache_session, log, 0)
+            internal_id = cache.get_internal_id(cache_session, items[counter].id_pae, "mod" if elem.paetype == 1 else "seq", src, log)
+            item = Pathitem(internal_id, elem.name, items[counter].id_pathid, elem.paetype, items[counter].id_parent, items[counter].lvl, items[counter].order, items[counter].operator)
 
             self.simple_counter = self.simple_counter + 1
             counter = counter + 1
@@ -61,18 +52,20 @@ class Exposed(object):
                     counter, new_children, written_sequences, built_sequences = self.getPathSequenceChildren(counter, written_sequences, items, elements_dict, item.lvl+1, built_sequences, src, cache_session, log)
                     for child in new_children:
                         item.children.append(child)
+                    item.children.sort(key=lambda x: x.order, reverse=False)
 
                 else:
                     item.expanded = False
                     counter, new_children, written_sequences, built_sequences = self.getPathSequenceChildren(counter, written_sequences, items, elements_dict, item.lvl+1, built_sequences, src, cache_session, log)
                     for child in new_children:
                         item.children.append(child)
+                    item.children.sort(key=lambda x: x.order, reverse=False)
 
                     written_sequences.add(item.name)
                     built_sequences.add(item)
-                
+
             children.append(item)
-            
+
         return counter, children, written_sequences, built_sequences
 
     #Returns the path items (Sequences and Modules)
@@ -83,286 +76,235 @@ class Exposed(object):
     #         ver: version id
     #         db: database session object
     #
-    def getPathItems(self, gid=-2, ver=-2, db = None, log = None, src = 0, request = None):
+    def getPathItems(self, internal_path_id=-2, ver=-2, db = None, log = None, src = 0, request = None):
 
-        if (gid == -1 or db == None or ver == -1):
-            log.error('ERROR: getPathItems - input parameters error' + self.log_arguments(gid=gid, ver=ver))
+        if (internal_path_id == -1 or db == None or ver == -1):
+            log.error('ERROR: getPathItems - input parameters error' + self.log_arguments(gid=internal_path_id, ver=ver))
 
         queries = self.queries
         cache = self.cache
         cache_session = request.db_cache
 
-        # id_p = patsMap.get(gid)
-        ext_pat_id = cache.patMappingDictGetExternal(gid, src, "pat", cache_session, log)
-	ext_pat_id = int(ext_pat_id)
-	log_msg = "id_p from GET: " + str(ext_pat_id)
-	log.error(log_msg)
-	
         resp = Response()
         schema = ResponsePathItemSchema()
-        #Retreive all the sequences and their items of the path
 
-        #DB Queries
-        elements = None
-        items = None
+        pats = cache.get_path_items(internal_path_id, ver, cache_session, log)
 
-        try:
-            elements = queries.getCompletePathSequences(ext_pat_id, ver, db, log)
-            items = queries.getCompletePathSequencesItems(ext_pat_id, ver, db, log)
-        except Exception as e:
-	    msg = 'ERROR: Query getCompletePathSequences/Query getCompletePathSequencesItems Error: ' + e.args[0]
-            log.error(msg)
+        if len(pats) is 0:
+
+            ext_pat_id = cache.get_external_id(cache_session, internal_path_id, "pat", src, log)
+
+            #DB Queries
+            elements = None
+            items = None
+
+            try:
+                elements = queries.getCompletePathSequences(ext_pat_id, ver, db, log)
+                items = queries.getCompletePathSequencesItems(ext_pat_id, ver, db, log)
+            except Exception as e:
+                msg = 'ERROR: Query getCompletePathSequences/Query getCompletePathSequencesItems Error: ' + e.args[0]
+                log.error(msg)
+                return None
+
+            if (elements == None or items == None):
+                return None
+
+            written_sequences = set()
+            built_sequences = set()
+
+            lvlZeroSeq_Dict = {}
+
+            elements_dict = dict((element.id, element) for element in elements)
+
+            counter = 0
+
+            while counter < len(items):
+                elem = elements_dict[items[counter].id_pae]
+                internal_id = cache.get_internal_id(cache_session, items[counter].id_pae, "seq", src, log)
+                item = Pathitem(internal_id, elem.name, items[counter].id_pathid, elem.paetype, items[counter].id_parent, items[counter].lvl, items[counter].order, items[counter].operator)
+
+                self.simple_counter = self.simple_counter + 1
+                counter = counter + 1
+
+                if item.paetype == 2:
+
+                    if item.lvl == 0:
+                        lvlZeroSeq_Dict[item.internal_id] = item.internal_id
+
+                    if item.name in written_sequences:
+                        counter = self.skipPathSequence(counter, items, item.lvl+1)
+                    else:
+                        counter, new_children, written_sequences, built_sequences = self.getPathSequenceChildren(counter, written_sequences, items, elements_dict, item.lvl+1, built_sequences, src, cache_session, log)
+                        for child in new_children:
+
+                            item.children.append(child)
+                        item.children.sort(key=lambda x: x.order, reverse=False)
+
+                        written_sequences.add(item.name)
+                        item.expanded = False
+                        built_sequences.add(item)
+
+            seq = dict((x.internal_id, x) for x in built_sequences)
+
+
+            #Retreive the lvl 0 of the path
+            lista = queries.getLevelZeroPathItems(ext_pat_id, ver, db, log)
+            lvlzelems = queries.getLevelZeroPaelements(ext_pat_id, ver, db, log)
+
+            lvlzelems_dict = dict((x.id, x) for x in lvlzelems)
+
+            for l in lista:
+                elem = lvlzelems_dict[l.id_pae]
+                internal_id = cache.get_internal_id(cache_session, l.id_pae, "mod", src, log)
+                item = Pathitem(internal_id, elem.name, l.id_pathid, elem.paetype, l.id_parent, l.lvl, l.order, l.operator)
+                pats.insert(item.order, item)
+
+    #        #merge the sequences created
+    #        for ss in seq.viewvalues():
+    #            pats.insert(ss.order, ss)
+
+            lvlZeroSeq_Dict_keys = lvlZeroSeq_Dict.keys()
+            for lzseq in lvlZeroSeq_Dict_keys:
+                lzsequence = seq[lzseq]
+                pats.insert(lzsequence.order, lzsequence)
+
+            pats = cache.put_path_items(internal_path_id, pats, ver, cache_session, log)
+            pats.sort(key=lambda x: x.order, reverse=False)
+
+        if pats is None:
             return None
-
-        if (elements == None or items == None):
-            return None
-
-        #Elements construction
-#        print "RESULTS LEN: ", len(items), len(elements)
-
-        items_dict = dict((x.id, x) for x in items)
-        elements_dict = dict((x.id, x) for x in elements)
-        
-        written_sequences = set()
-        built_sequences = set()
-
-        seq = {}
-        lvlZeroSeq_Dict = {}
-        idpaes = {}
-
-        #Build all the sequences
-        #                                                                                                                   #                                                    
-        # ----------------------------------------------------------------------------------------------------------------- #
-        #       New Routine for sequences
-        #  
-
-        elements_dict = dict((element.id, element) for element in elements)
-
-        counter = 0
-        idgen_new = 1
-
-        while counter < len(items):
-            elem = elements_dict[items[counter].id_pae]
-            item = Pathitem(items[counter].id_pae, elem.name, items[counter].id_pathid, elem.paetype, items[counter].id_parent, items[counter].lvl, items[counter].order, items[counter].operator)
-            # item.gid = seqsMap.put(idgen,elem,items[counter].id_pathid,items[counter].order,items[counter].lvl,items[counter].id)
-            # item.gid = seqsMap.put(elem,items[counter].id_pathid,items[counter].order,items[counter].lvl)
-
-            if elem.paetype == 1:
-                # item.gid = modsMap.put(elem, items[counter].id_pathid, items[counter].order, items[counter].lvl)
-                item.gid = cache.patMappingDictPut(src, items[counter].id_pae, "mod", cache_session, log, 0)
-            elif elem.paetype == 2:        
-                # item.gid = seqsMap.put(elem,items[counter].id_pathid,items[counter].order,items[counter].lvl)
-                item.gid = cache.patMappingDictPut(src, items[counter].id_pae, "seq", cache_session, log, 0)
-
-            self.simple_counter = self.simple_counter + 1
-            counter = counter + 1
-            
-            if item.paetype == 2:
-                
-                if item.lvl == 0:
-                    lvlZeroSeq_Dict[item.gid] = item.id
-                
-                if item.name in written_sequences:
-                    counter = self.skipPathSequence(counter, items, item.lvl+1)
-                else:
-                    counter, new_children, written_sequences, built_sequences = self.getPathSequenceChildren(counter, written_sequences, items, elements_dict, item.lvl+1, built_sequences, src, cache_session, log)
-                    for child in new_children:
-
-                        item.children.append(child)
-
-                    written_sequences.add(item.name)
-                    item.expanded = False
-                    built_sequences.add(item)
-
-
-
-
-        #                                                                                                                   #                                                    
-        # ----------------------------------------------------------------------------------------------------------------- #
-        #     
-
-        seq = dict((x.gid, x) for x in built_sequences)
-
-
-        #Retreive the lvl 0 of the path
-        lista = queries.getLevelZeroPathItems(ext_pat_id, ver, db, log)
-        lvlzelems = queries.getLevelZeroPaelements(ext_pat_id, ver, db, log)
-
-        lvlzelems_dict = dict((x.id, x) for x in lvlzelems)
-        pats = []
-
-        for l in lista:
-            elem = lvlzelems_dict[l.id_pae]
-            item = Pathitem(l.id_pae , elem.name, l.id_pathid, elem.paetype, l.id_parent, l.lvl, l.order, l.operator)
-            # item.gid = modsMap.put(elem, l.id_pathid, l.order, l.lvl)
-            item.gid = cache.patMappingDictPut(src, l.id_pae, "mod", cache_session, log, 0)
-            pats.insert(item.order, item)
-
-#        #merge the sequences created
-#        for ss in seq.viewvalues():
-#            pats.insert(ss.order, ss)
-
-        lvlZeroSeq_Dict_keys = lvlZeroSeq_Dict.keys()
-        for lzseq in lvlZeroSeq_Dict_keys: #lvlZeroSeq_Dict.viewkeys(): #viewvalues():
-            lzsequence = seq[lzseq]
-            pats.insert(lzsequence.order, lzsequence)
-
-        pats.sort(key=lambda x: x.order, reverse=False)
         resp.success = True
         resp.children = pats
 
         output = schema.dump(resp)
-        #assert isinstance(output.data, OrderedDict)
 
         return output.data
 
-    #Returns the path items (Sequences and Modules)
-    #@params: patsMap: map of paths database ids
-    #         seqsMap: map of sequences database ids
-    #         modsMap: map of moduels database ids
-    #         gid: path node generated id
-    #         ver: version id
-    #         db: database session object
-    #
+    def getEndPathItems(self, internal_endpath_id=-2, ver=-2, db = None, log = None, request = None, src = 0):
 
-    def getEndPathItems(self, gid=-2, ver=-2, db = None, log = None, request = None, src = 0):
-
-        if (gid == -1 or db == None or ver == -1):
+        if (internal_endpath_id == -1 or db == None or ver == -1):
             log.error('ERROR: getEndPathItems - input parameters error' + self.log_arguments(gid=gid, ver=ver))
 
         queries = self.queries
         cache = self.cache
         cache_session = request.db_cache
 
-        external_id = 0
-        itemtype = "pat"
-        # id_p = patsMap.get(gid)
-        external_id = cache.patMappingDictGetExternal(gid, src, itemtype, cache_session, log)
-
         resp = Response()
         schema = ResponsePathItemSchema()
-        #Retreive all the sequences and their items of the path
 
-        #DB Queries
-        elements = None
-        items = None
+        endpath_items = cache.get_path_items(internal_endpath_id, ver, cache_session, log)
 
-        try:
-            elements = queries.getCompletePathSequences(external_id, ver, db, log)
-            items = queries.getCompletePathSequencesItems(external_id, ver, db, log)
-        except:
-            log.error('ERROR: Query Error')
-            return None
+        if len(endpath_items) is 0:
+            external_id = cache.get_external_id(cache_session, internal_endpath_id, "pat", src, log)
 
-        if (elements == None or items == None):
-            return None
+            try:
+                elements = queries.getCompletePathSequences(external_id, ver, db, log)
+                items = queries.getCompletePathSequencesItems(external_id, ver, db, log)
+            except:
+                log.error('ERROR: Query Error')
+                return None
 
-        written_sequences = set()
-        built_sequences = set()
+            if (elements == None or items == None):
+                return None
 
-        lvlZeroSeq_Dict = {}
+            written_sequences = set()
+            built_sequences = set()
 
-        #                                                                                                                   #                                                    
-        # ----------------------------------------------------------------------------------------------------------------- #
-        #       New Routine for sequences
-        #  
+            lvlZeroSeq_Dict = {}
 
-        elements_dict = dict((element.id, element) for element in elements)
+            #                                                                                                                   #
+            # ----------------------------------------------------------------------------------------------------------------- #
+            #       New Routine for sequences
+            #
 
-        counter = 0
+            elements_dict = dict((element.id, element) for element in elements)
 
-        while counter < len(items):
-            elem = elements_dict[items[counter].id_pae]
-            item = Pathitem(items[counter].id_pae, elem.name, items[counter].id_pathid, elem.paetype, items[counter].id_parent, items[counter].lvl, items[counter].order, items[counter].operator)
-            # item.gid = seqsMap.put(idgen,elem,items[counter].id_pathid,items[counter].order,items[counter].lvl,items[counter].id)
-            # item.gid = seqsMap.put(elem,items[counter].id_pathid,items[counter].order,items[counter].lvl)
+            counter = 0
 
-            if elem.paetype == 1:
-                # item.gid = modsMap.put(elem, items[counter].id_pathid, items[counter].order, items[counter].lvl)
-                item.gid = cache.patMappingDictPut(src, items[counter].id_pae, "mod", cache_session, log, 0)
-            elif elem.paetype == 2:        
-                # item.gid = seqsMap.put(elem,items[counter].id_pathid,items[counter].order,items[counter].lvl)
-                item.gid = cache.patMappingDictPut(src, items[counter].id_pae, "seq", cache_session, log, 0)
+            while counter < len(items):
+                elem = elements_dict[items[counter].id_pae]
+                internal_id = cache.get_internal_id(cache_session, items[counter].id_pae, "mod" if elem.paetype == 1 else "seq", src, log)
+                item = Pathitem(internal_id, elem.name, items[counter].id_pathid, elem.paetype, items[counter].id_parent, items[counter].lvl, items[counter].order, items[counter].operator)
 
-            self.simple_counter = self.simple_counter + 1
-            counter = counter + 1
-            
-            if item.paetype == 2:
-                
-                if item.lvl == 0:
-                    lvlZeroSeq_Dict[item.gid] = item.id
-                
-                if item.name in written_sequences:
-                    counter = self.skipPathSequence(counter, items, item.lvl+1)
-                else:
-                    counter, new_children, written_sequences, built_sequences = self.getPathSequenceChildren(counter, written_sequences, items, elements_dict, item.lvl+1, built_sequences, src, cache_session, log)
-                    for child in new_children:
+                self.simple_counter = self.simple_counter + 1
+                counter = counter + 1
 
-                        item.children.append(child)
+                if item.paetype == 2:
 
-                    written_sequences.add(item.name)
-                    item.expanded = False
-                    built_sequences.add(item)
+                    if item.lvl == 0:
+                        lvlZeroSeq_Dict[item.internal_id] = item.internal_id
+
+                    if item.name in written_sequences:
+                        counter = self.skipPathSequence(counter, items, item.lvl+1)
+                    else:
+                        counter, new_children, written_sequences, built_sequences = self.getPathSequenceChildren(counter, written_sequences, items, elements_dict, item.lvl+1, built_sequences, src, cache_session, log)
+                        for child in new_children:
+
+                            item.children.append(child)
+                        item.children.sort(key=lambda x: x.order, reverse=False)
+
+                        written_sequences.add(item.name)
+                        item.expanded = False
+                        built_sequences.add(item)
 
 
-        #                                                                                                                   #                                                    
-        # ----------------------------------------------------------------------------------------------------------------- #
-        #
+            #                                                                                                                   #
+            # ----------------------------------------------------------------------------------------------------------------- #
+            #
 
-        seq = dict((x.gid, x) for x in built_sequences)
+            seq = dict((x.internal_id, x) for x in built_sequences)
 
-        #Retreive the lvl 0 of the path
-        lista = queries.getLevelZeroPathItems(external_id, ver, db, log)
-        lvlzelems = queries.getLevelZeroPaelements(external_id, ver, db, log)
+            #Retreive the lvl 0 of the path
+            lista = queries.getLevelZeroPathItems(external_id, ver, db, log)
+            lvlzelems = queries.getLevelZeroPaelements(external_id, ver, db, log)
 
-        lvlzelems_dict = dict((x.id, x) for x in lvlzelems)
-        pats = []
+            lvlzelems_dict = dict((x.id, x) for x in lvlzelems)
 
-        for l in lista:
-            elem = lvlzelems_dict[l.id_pae]
-            item = Pathitem(l.id_pae , elem.name, l.id_pathid, elem.paetype, l.id_parent, l.lvl, l.order, l.operator)
-            # item.gid = modsMap.put(elem, l.id_pathid, l.order, l.lvl)
-            item.gid = cache.patMappingDictPut(src, l.id_pae, "mod", cache_session, log,0)
-            pats.insert(item.order, item)
+            for l in lista:
+                elem = lvlzelems_dict[l.id_pae]
+                internal_id = cache.get_internal_id(cache_session, l.id_pae, "mod" if elem.paetype == 1 else "seq", src, log)
+                item = Pathitem(internal_id, elem.name, l.id_pathid, elem.paetype, l.id_parent, l.lvl, l.order, l.operator)
+                endpath_items.insert(item.order, item)
 
-        #merge the sequences created
-#        for ss in seq.viewvalues():
-#            pats.insert(ss.order, ss)
+            #merge the sequences created
+    #        for ss in seq.viewvalues():
+    #            pats.insert(ss.order, ss)
 
-        lvlZeroSeq_Dict_keys = lvlZeroSeq_Dict.keys()
-        for lzseq in lvlZeroSeq_Dict_keys: #lvlZeroSeq_Dict.viewkeys(): #viewvalues():
-            lzsequence = seq[lzseq]
-            pats.insert(lzsequence.order, lzsequence)
+            lvlZeroSeq_Dict_keys = lvlZeroSeq_Dict.keys()
+            for lzseq in lvlZeroSeq_Dict_keys: #lvlZeroSeq_Dict.viewkeys(): #viewvalues():
+                lzsequence = seq[lzseq]
+                endpath_items.insert(lzsequence.order, lzsequence)
 
-        #DB Queries
-        outmodule = None
+            #DB Queries
+            outmodule = None
 
-        try:
-            outmodule = queries.getOumStreamid(external_id, db, log)
+            try:
+                outmodule = queries.getOumStreamid(external_id, db, log)
 
-        except:
-            log.error('ERROR: Query getOumStreamid Error')
-            return None
+            except:
+                log.error('ERROR: Query getOumStreamid Error')
+                return None
 
-#        if (outmodule == None):
-#            return None
+    #        if (outmodule == None):
+    #            return None
 
-        if (outmodule != None):
-#            print "OUM " + str(outmodule)
-#            print "OUM "+ str(outmodule.id_streamid)
-            stream = queries.getStreamid(outmodule.id_streamid, db, log)
+            if (outmodule != None):
+    #            print "OUM " + str(outmodule)
+    #            print "OUM "+ str(outmodule.id_streamid)
+                stream = queries.getStreamid(outmodule.id_streamid, db, log)
 
-            oumName = "hltOutput"+stream.name
-            oum = Pathitem(outmodule.id_streamid, oumName, outmodule.id_pathid, 3, -1, 0, outmodule.order)
+                oumName = "hltOutput"+stream.name
 
-            # oum.gid = oumodsMap.put(oum)
-            oum.gid = cache.patMappingDictPut(src, outmodule.id_streamid, "oum", cache_session, log)
+                internal_id = cache.get_internal_id(cache_session, outmodule.id_streamid, "oum", src, log)
+                oum = Pathitem(internal_id, oumName, outmodule.id_pathid, 3, -1, 0, outmodule.order)
 
-            pats.insert(oum.order, oum)
+                endpath_items.insert(oum.order, oum)
+                endpath_items.sort(key=lambda x: x.order, reverse=False)
 
-        pats.sort(key=lambda x: x.order, reverse=False)
+            endpath_items = cache.put_path_items(internal_endpath_id, endpath_items, ver, cache_session, log)
+
         resp.success = True
-        resp.children = pats
+        resp.children = endpath_items
 
         output = schema.dump(resp)
         #assert isinstance(output.data, OrderedDict)
@@ -397,42 +339,39 @@ class Exposed(object):
         if (cnf != -2 and cnf != -1):
             cnf = cache.folMappingDictGetExternal(cnf, src, "cnf", cache_session, log)
 
-#        print "CNF after get ", cnf
-
         ver_id = -1
 
         version = self.getRequestedVersion(ver, cnf, db, log)
         ver_id = version.id
 
-        #DB Queries
-        pats = None
-
-        try:
-            pats = queries.getPaths(ver_id, db, log)
-
-        except:
-            log.error('ERROR: Query getPaths Error')
+        paths = self.getPathsFromCache(cache_session, db, ver_id, log, src)
+        if paths is None:
             return None
 
-#        if (pats == None):
-#            return None
-
-        i = 0
-        for p in pats:
-            p.vid = ver_id
-            p.order = i
-            # p.gid = patsMap.put(p)
-            p.gid = cache.patMappingDictPut(src, p.id, "pat", cache_session, log)
-            i = i+1
-
-        resp.children = pats
-
+        resp.children = paths
         resp.success = True
         output = schema.dump(resp)
-        #assert isinstance(output.data, OrderedDict)
-
         return output.data
 
+    def getPathsFromCache(self, cache_session, db, ver_id, log, src):
+        paths = self.cache.get_paths(ver_id, cache_session, log)
+        if len(paths) is 0:
+            try:
+                paths = self.queries.getPaths(ver_id, db, log)
+                i = 0
+                path_wraped = []
+                for p in paths:
+                    p.vid = ver_id
+                    p.order = i
+                    p.internal_id = self.cache.get_internal_id(cache_session, p.id, "pat", src, log)
+                    i = i + 1
+                    path_wraped.append(Path(p.internal_id, p.id_path, p.description, p.name, p.vid, p.order, p.isEndPath))
+                self.cache.put_paths(ver_id, path_wraped, cache_session, log)
+
+            except:
+                log.error('ERROR: Query getPaths Error')
+                return None
+        return paths
 
     #Returns the end paths
     #@params: patsMap: map of paths database ids
@@ -468,34 +407,37 @@ class Exposed(object):
         version = self.getRequestedVersion(ver, cnf, db, log)
         ver_id = version.id
 
-        #DB Queries
-        pats = None
-
-        try:
-            pats = queries.getEndPaths(ver_id, db, log)
-
-        except:
-            log.error('ERROR: Query getEndPaths Error')
+        end_paths = self.getEndPathsFromCache(cache_session, db, ver_id, log, src)
+        if end_paths is None:
             return None
 
-#        if (pats == None):
-#            return None
-
-        i = 0
-        for p in pats:
-            p.vid = ver_id
-            p.order = i
-            # p.gid = patsMap.put(p)
-            p.gid = cache.patMappingDictPut(src, p.id, "pat", cache_session, log)
-            i = i+1
-
-        resp.children = pats
-
+        resp.children = end_paths
         resp.success = True
+
         output = schema.dump(resp)
         #assert isinstance(output.data, OrderedDict)
 
         return output.data
+
+    def getEndPathsFromCache(self, cache_session, db, ver_id, log, src):
+        end_paths = self.cache.get_endpaths(ver_id, cache_session, log)
+        if end_paths is None:
+            try:
+                end_paths = self.queries.getEndPaths(ver_id, db, log)
+                i = 0
+                path_wraped = []
+                for p in end_paths:
+                    p.vid = ver_id
+                    p.order = i
+                    p.internal_id = self.cache.get_internal_id(cache_session, p.id, "pat", src, log)
+                    i = i + 1
+                    path_wraped.append(Path(p.internal_id, p.id_path, p.description, p.name, p.vid, p.order, p.isEndPath))
+                self.cache.put_endpaths(ver_id, path_wraped, cache_session, log)
+
+            except:
+                log.error('ERROR: Query getEndPaths Error')
+                return None
+        return end_paths
 
     #Returns the paths
     #@params: patsMap: map of paths database ids
@@ -505,42 +447,128 @@ class Exposed(object):
     #         db: database session object
     #
 
-    def getOUModuleItems(self, oumid=-2, db = None, src = 0, request = None, log = None):
+    def getOUModuleItems(self, oumid=-2, db = None, src = 0, request = None, verid = -1, log = None):
 
         if (oumid == -2 or db == None):
             log.error('ERROR: getOUModuleItems - input parameters error' + self.log_arguments(oumid=oumid))
 
         cache = self.cache
         cache_session = request.db_cache
-
-#        print "OUMID: ", oumid
-        external_id = oumid #srvsMap.get(sid)
-#        print "ID_P: ", id_p, oumid
-        external_id = cache.patMappingDictGetExternal(external_id, src, "oum", cache_session, log)
-
         resp = Response()
         schema = ResponseParamSchema()
 
-        resp.children = self.params_builder.outputModuleParamsBuilder(external_id, self.queries, db, log)
 
-        if (resp.children == None):
+        oumodule_params = cache.get_params(oumid, verid, cache_session, log)
+        if oumodule_params is None:
+            external_id = cache.get_external_id(cache_session, oumid, "oum", src, log)
+
+            oumodule_params = self.params_builder.outputModuleParamsBuilder(external_id, self.queries, db, log)
+            for param in oumodule_params:
+                param.module_id = oumid
+
+            cache.put_params(oumid, oumodule_params, verid, cache_session, log)
+
+        if oumodule_params is None:
             return None
-
         resp.success = True
-         #params
-
+        resp.children = oumodule_params
         output = schema.dump(resp)
-        #assert isinstance(output.data, OrderedDict)
-
         return output.data
 
-    def update_module_cache(self, mod_id, src, param_name, value, request, log):
-
+    def update_streams_event(self, stream_id, internal_evcon_id, version_id, value, request, log):
         cache = self.cache
         cache_session = request.db_cache
-        cache.update_params(mod_id, param_name, value, cache_session, log)
+        return cache.update_streams_event(stream_id, internal_evcon_id, version_id, value, cache_session, log)
 
-    def getModuleItems(self, mid=-2, db = None, src = 0, request = None, allmod = "false", fromSequence = False, log = None):
+    def update_event_statement(self, internal_id, statementrank, src, column, value, verid, request, log):
+        cache = self.cache
+        cache_session = request.db_cache
+        cache.update_event_statements(internal_id, statementrank, column, value, verid, cache_session, log)
+
+    def add_event_statement(self, internal_id, verid, drop_line, request, log):
+        cache = self.cache
+        cache_session = request.db_cache
+        return cache.add_event_statement(internal_id, verid, drop_line, cache_session, log)
+
+    def delete_event_statement(self, internal_id, rank, request, log):
+        cache = self.cache
+        cache_session = request.db_cache
+        return cache.delete_event_statement(internal_id, rank, cache_session, log)
+
+    def update_cached_param(self, mod_id, src, param_name, value, ver, request, log):
+        cache = self.cache
+        cache_session = request.db_cache
+        cache.update_params(mod_id, param_name, value, ver, cache_session, log)
+
+    def drag_n_drop_reorder(self, node_id, old_parent, new_order, version_id, request, log):
+        cache = self.cache
+        cache_session = request.db_cache
+        cache.drag_n_drop_reorder(node_id, old_parent, new_order, version_id, cache_session, log)
+
+    def drag_n_drop(self, node_id, old_parent, new_parent, new_order, copied, version, request, log):
+        cache = self.cache
+        cache_session = request.db_cache
+        cache_session.begin_nested()
+        cache_session.execute('LOCK TABLE path_items_hierarchy IN ACCESS EXCLUSIVE MODE;')
+        if new_order < 0:
+            max_order = cache.get_max_order(cache_session, new_parent, version, log)
+            if max_order == 0:
+                db_offline = request.db_offline
+                # db selection and src is hardcoded, not good
+                self.getPathItems(new_parent, version, db_offline, log, 0, request)
+                max_order = cache.get_max_order(cache_session, new_parent, version, log)
+            new_order = max_order
+
+        if copied:
+            cache.drag_n_drop_add_parent(node_id, new_parent, new_order, version, cache_session, log)
+        else:
+            cache.drag_n_drop_move(node_id, new_parent, old_parent, new_order, version, cache_session, log)
+        cache_session.commit()
+        # to close nested transaction
+        cache_session.commit()
+
+    def path_move(self, path_id, new_parent, old_parent, request, log, version):
+        cache = self.cache
+        cache_session = request.db_cache
+        cache_session.begin_nested()
+        cache_session.execute('LOCK TABLE paths2datasets_relation IN ACCESS EXCLUSIVE MODE;')
+        paths_wrapped = cache.get_datasets_paths(version, new_parent, cache_session, log)
+        if paths_wrapped is None:
+            try:
+                # src and db are hardcoded again. Doubt that it is ok...
+                src = 0
+                db_offline = request.db_offline
+                ext_ds_id = cache.get_external_id(cache_session, new_parent, "dat", src, log)
+                paths = self.queries.getDatasetPathids(version, ext_ds_id, db_offline, log)
+                for p in paths:
+                    p.internal_id = cache.get_internal_id(cache_session, p.id, "pat", src, log)
+                cache.put_datasets_paths(paths, new_parent, version, cache_session, log)
+            except:
+                log.error('ERROR: Query path_move Error')
+
+        cache.add_parent2dataset(path_id, new_parent, version, cache_session, log)
+        cache.remove_parent2dataset(path_id, old_parent, version, cache_session, log)
+
+        cache_session.commit()
+        # to close nested transaction
+        cache_session.commit()
+
+    def dataset_update(self, dataset_id, path_ids, request, log, version):
+        cache = self.cache
+        cache_session = request.db_cache
+        cache_session.begin_nested()
+        cache_session.execute('LOCK TABLE paths2datasets_relation IN ACCESS EXCLUSIVE MODE;')
+        try:
+            cache.update_datasets_paths(path_ids, dataset_id, version, cache_session, log)
+        except:
+            log.error('ERROR: Query dataset_update Error')
+
+        cache_session.commit()
+        # to close nested transaction
+        cache_session.commit()
+
+
+    def getModuleItems(self, mid=-2, db = None, src = 0, request = None, allmod = "false", fromSequence = False, verid = -1, log = None):
 
         if (mid == -2 or db == None):
             log.error('ERROR: getModuleItems - input parameters error' + self.log_arguments(mid=mid))
@@ -551,27 +579,26 @@ class Exposed(object):
         queries = self.queries
         module_params = []
 
-        internal_module_id = mid
 
         resp = Response()
         schema = ResponseParamSchema()
+        #
+        # if fromSequence:
+        #     internal_module_id = cache.seqMappingDictGetInternal(mid, "mod", cache_session, log)
+        #
+        # else:
+        #     if (allmod == 'true'):
+        #         # MODULE TAB
+        #         internal_module_id = cache.allmodMappingDictGetInternal(mid, "mod", cache_session, log)
+        #
+        #     else:
+        #         # PATH OR ENDPATH TAB
+        #         internal_module_id = cache.patMappingDictGetInternal(mid, "mod", cache_session, log)
 
-        if fromSequence:
-            internal_module_id = cache.seqMappingDictGetInternal(mid, "mod", cache_session, log)
-
-        else:
-            if (allmod == 'true'):
-                # MODULE TAB
-                internal_module_id = cache.allmodMappingDictGetInternal(mid, "mod", cache_session, log)
-
-            else:
-                # PATH OR ENDPATH TAB
-                internal_module_id = cache.patMappingDictGetInternal(mid, "mod", cache_session, log)
-
-        module_params = cache.get_params(internal_module_id, cache_session, log)
+        internal_module_id = mid
+        module_params = cache.get_params(internal_module_id, verid, cache_session, log)
 
         if module_params is None:
-            print('from db')
             external_module_id = cache.get_external_id(cache_session, internal_module_id, "mod", src, log)
 
             module_params = self.params_builder.moduleParamsBuilder(external_module_id, queries, db, log)
@@ -579,8 +606,7 @@ class Exposed(object):
             for param in module_params:
                 param.module_id = internal_module_id
 
-            cache.put_params(internal_module_id, module_params, cache_session, log)
-            print('added to cache')
+            cache.put_params(internal_module_id, module_params, verid, cache_session, log)
 
         if module_params is None:
             return None
@@ -906,8 +932,8 @@ class Exposed(object):
 
         if (cnf != -2 and cnf != -1):
             cnf = cache.folMappingDictGetExternal(cnf, src, "cnf", cache_session, log)
-        
-        ext_pat_id = cache.patMappingDictGetExternal(pid, src, "pat", cache_session, log)
+
+        ext_pat_id = cache.get_external_id(cache_session, pid, "pat", src, log)
 
         #ToDo IdV_er / CNF
         ver_id = -1
@@ -1079,14 +1105,7 @@ class Exposed(object):
         if (mod == -2 or pat == -2 or db == None):
             log.error('ERROR: getModuleDetails - input parameters error' + self.log_arguments(mod_id=mod, pat_id=pat))
 
-        external_id = -1
-
-        if fromSequence:
-            external_id = cache.seqMappingDictGetExternal(mod, src, "mod", cache_session, log)
-        
-        else:
-            external_id = cache.patMappingDictGetExternal(mod, src, "mod", cache_session, log)
-
+        external_id = cache.get_external_id(cache_session, mod, "mod", src, log)
 
         resp = Response()
         schema = ResponseModuleDetailsSchema()
@@ -1163,7 +1182,7 @@ class Exposed(object):
 
         try:
 
-            modules = queries.getConfPaelements(ver_id, db, log)
+            modules = queries.getConfModules(ver_id, db, log)
 
             templates = queries.getRelTemplates(id_rel, db, log)
 
@@ -1189,12 +1208,10 @@ class Exposed(object):
             m2t = mod2temps_dict.get(m.id)
             if (templates_dict.has_key(m2t)):
                 temp = templates_dict.get(m2t)
-                md = ModuleDetails(m.id, m.name, temp.id_mtype, "", temp.name)
-
-                md.gid = cache.allmodMappingDictPut(src, m.id, "mod", cache_session, log)
-
+                internal_id = cache.get_internal_id(cache_session, m.id, "mod", src, log)
+                md = ModuleDetails(internal_id, m.name, temp.id_mtype, "", temp.name)
             else:
-                log.error('ERROR: Module key error') 
+                log.error('ERROR: Module key error')
 
             if (md != None):
                 resp.children.append(md)
@@ -1207,6 +1224,690 @@ class Exposed(object):
 
         return output.data
 
+    def get_service_messages(self, log=None, request=None):
+        cache = self.cache
+        cache_session = request.db_cache
+        resp = Response()
+        schema = ResponseServiceMessagesSchema()
+        messages = cache.get_service_messages(cache_session, log)
+        resp.success = True
+        resp.children = messages
+        output = schema.dump(resp)
+        return output.data
+
+
+    def get_input_tags_names(self, cnf=-2, ver=-2, db=None, log=None, request=None, src=0):
+        queries = self.queries
+        cache = self.cache
+        cache_session = request.db_cache
+        if ((cnf == -2 and ver == -2) or db == None):
+            log.error('ERROR: getInputTagsNames - input parameters error' + self.log_arguments(cnf=cnf, ver=ver))
+        resp = Response()
+        schema = ResponseModuleNamesSchema()
+        if (cnf != -2 and cnf != -1):
+            cnf = cache.folMappingDictGetExternal(cnf, src, "cnf", cache_session, log)
+        version = self.getRequestedVersion(ver, cnf, db, log)
+        if (version == None):
+            return None
+        ver_id = version.id
+        module_names = cache.get_modules_names(ver_id, cache_session, log)
+        if len(module_names) is 0:
+            try:
+                module_names = queries.getConfModules(ver_id, db, log)
+                cache.put_modules_names(ver_id, [o.name for o in module_names], cache_session, log)
+            except:
+                log.error('ERROR: Query get_input_tags_names Error')
+                return None
+        if module_names is None:
+            return None
+        resp.success = True
+        resp.children = module_names
+        output = schema.dump(resp)
+        return output.data
+
+    def get_evcon_names(self, ver_id=-2, log=None, db=None, request=None, src=0):
+        queries = self.queries
+        cache = self.cache
+        cache_session = request.db_cache
+        if ver_id == -2 or db == None:
+            log.error('ERROR: get_evcon_names - input parameters error' + self.log_arguments(ver=ver_id))
+        resp = Response()
+        schema = ResponseEvconNamesSchema()
+        evcon_names = cache.get_evcon_names(ver_id, cache_session, log)
+        if len(evcon_names) is 0:
+            try:
+                evcons = queries.getConfEventContents(ver_id, db, log)
+                evcon_names = cache.put_evcon_names(ver_id, evcons, cache_session, src, log)
+            except:
+                log.error('ERROR: Query get_evcon_names Error')
+                return None
+        if evcon_names is None:
+            return None
+        resp.success = True
+        resp.children = evcon_names
+        output = schema.dump(resp)
+        return output.data
+
+    def get_changed_params(self, ver_id, log=None, request=None):
+        cache = self.cache
+        cache_session = request.db_cache
+        changed_params, changed_templates_params = cache.get_changed_params(ver_id, cache_session, log)
+        return changed_params, changed_templates_params
+
+    def get_changed_path_items_hierarchy(self, ver_id, log=None, request=None):
+        cache = self.cache
+        cache_session = request.db_cache
+        changed_hierarchy = cache.get_changed_path_items_hierarchy(ver_id, cache_session, log)
+        return changed_hierarchy
+
+    def get_changed_dat2pat(self, ver_id, log=None, request=None):
+        cache = self.cache
+        cache_session = request.db_cache
+        dat2pat = cache.get_changed_datasets_paths(ver_id, cache_session, log)
+        return dat2pat
+
+    def get_changed_stream_event(self, ver_id, log=None, request=None):
+        cache = self.cache
+        cache_session = request.db_cache
+        str2evc, cached_evco_names = cache.get_changed_stream_event(ver_id, cache_session, log)
+        return str2evc, cached_evco_names
+
+    def get_changed_evco_statements(self, ver_id, log=None, request=None):
+        cache = self.cache
+        cache_session = request.db_cache
+        statements = cache.get_versions_event_statements(ver_id, cache_session, log)
+        return statements
+
+    def get_version(self, cnf=-2, ver=-2, db=None, log=None, request=None, src=0):
+        cache = self.cache
+        cache_session = request.db_cache
+        if cnf == -2 or ver == -2 or db is None:
+            log.error('ERROR: get_version - input parameters error' + self.log_arguments(cnf=cnf, ver=ver))
+        if cnf != -2 and cnf != -1:
+            cnf = cache.folMappingDictGetExternal(cnf, src, "cnf", cache_session, log)
+        version = self.getRequestedVersion(ver, cnf, db, log)
+        return version
+
+    def get_last_version(self, cnf, db=None, log=None):
+        if cnf == -2 or db is None:
+            log.error('ERROR: get_version - input parameters error' + self.log_arguments(cnf=cnf))
+        version = self.getRequestedVersion(-2, cnf, db, log)
+        return version
+
+    def create_new_version(self, old_version, version_number, db=None, log=None):
+        old_version.version = version_number
+        # TODO: use username from
+        old_version.creator = 'admin'
+        old_version.created = datetime.datetime.now()
+        # TODO: change this
+        old_version.description = 'testing saving'
+        old_version.name = re.search('.*\/V', old_version.name).group(0) + str(version_number)
+        return self.queries.save_version(old_version, db, log)
+
+    def create_new_configuration(self, changed_version, db=None, request=None, log=None, src=0):
+        any_changes = False
+        changed_params, changed_templates_params = self.get_changed_params(changed_version.id, log, request)
+        any_changes |= len(changed_params) > 0
+        any_changes |= len(changed_templates_params) > 0
+        changed_hierarchy = self.get_changed_path_items_hierarchy(changed_version.id, log, request)
+        any_changes |= len(changed_hierarchy) > 0
+        changed_dat2pats = self.get_changed_dat2pat(changed_version.id, log, request)
+        any_changes |= len(changed_dat2pats) > 0
+        changed_str2evc, cached_names = self.get_changed_stream_event(changed_version.id, log, request)
+        any_changes |= len(changed_str2evc) > 0
+        changed_evco_statements = self.get_changed_evco_statements(changed_version.id, log, request)
+        any_changes |= len(changed_evco_statements) > 0
+        if not any_changes:
+            log.error('ERROR: create_new_configuration - no changes found')
+        else:
+            try:
+                # TODO: do it in one transaction
+                last_version = self.get_last_version(changed_version.id_config, db, log)
+                if last_version is not None:
+                    changed_version_id = changed_version.id
+                    self.queries.detach_obj_from_session(changed_version, db, log)
+                    new_version = self.create_new_version(changed_version, last_version.version + 1, db, log)
+                    old2new_paths = self.save_paths(changed_version_id, new_version.id, changed_params, changed_templates_params, changed_hierarchy, db, log)
+                    self.save_ed_sources(changed_version_id, new_version.id, changed_params, changed_templates_params, db, log)
+                    self.save_services(changed_version_id, new_version.id, changed_params, changed_templates_params, db, log)
+                    self.save_streams_datasets(changed_version_id, new_version.id, old2new_paths, changed_dat2pats, changed_str2evc, cached_names, changed_evco_statements, db, log, request.db_cache)
+                    self.save_es_modules(changed_version_id, new_version.id, changed_params, changed_templates_params, db, log)
+                    self.save_es_sources(changed_version_id, new_version.id, changed_params, changed_templates_params, db, log)
+                    self.save_global_pset(changed_version_id, new_version.id, changed_params, db, log)
+                    db.commit()
+            except Exception as e:
+                msg = 'ERROR: Query create_new_configuration Error: ' + e.args[0]
+                log.error(msg)
+
+    def save_paths(self, changed_version_id, new_version_id, changed_params, changed_template_params, changed_hierarchy, db, log):
+
+        # 1. gathering data to copy
+
+        # 1.1 paths, endpaths, their modules/sequences and their params for modules and templates
+
+        pathid2conf = []
+        pathids = self.queries.getPaths(changed_version_id, db, log)
+        pathids.extend(self.queries.getEndPaths(changed_version_id, db, log))
+        pathid2pae = self.queries.get_conf_pathitems(changed_version_id, db, log)
+        paelements = self.queries.get_conf_paelements(changed_version_id, db, log)
+        pae2tmpl = self.queries.getMod2TempByVer(changed_version_id, db, log)
+        pae2moe = self.queries.get_mod2param_by_ver(changed_version_id, db, log)
+
+        moelements = set()
+        for moe_id in pae2moe:
+            # this is made to keep only unique module params, because they may duplicate otherwise
+            tmp_list = self.queries.getModuleParamElements(moe_id.id_moe, db, log)
+            for moelement in tmp_list:
+                moelements.add(moelement)
+
+        # 2. detaching from db session, after that we can change it and it will not affect old versions
+
+        self.queries.detach_objects_from_session(pathid2pae, db, log)
+        self.queries.detach_objects_from_session(pae2tmpl, db, log)
+        self.queries.detach_objects_from_session(pae2moe, db, log)
+
+        # 3. saving copied data
+
+        old2new_paths = self.queries.save_get_id_mapping(pathids, db, log)
+        old2new_modules = self.queries.save_get_id_mapping(paelements, db, log)
+        old2new_params = self.queries.save_get_id_mapping(moelements, db, log)
+
+        # 4. modifying/updating data, creating some new instances
+
+        # 4.1 updating params with values from cache
+
+        moelements_dict = dict((x.id, x) for x in moelements)
+        for old_id in old2new_params.keys():
+            moelement = moelements_dict[old2new_params[old_id]]
+            if old_id in changed_params and moelement.name in changed_params[old_id]:
+                moelement.value = changed_params[old_id][moelement.name].value
+
+        # 4.2 mapping new paths to corresponding templates
+        pae2moe_to_save = []
+
+        for p2m in pae2tmpl:
+            p2m.id_pae = old2new_modules[p2m.id_pae]
+
+            # if template parameter(s) was changed
+            if p2m.id_templ in changed_template_params:
+                for changed_template_param in changed_template_params[p2m.id_templ].values():
+                    # create new module parameter
+                    param_to_save = self.queries.map_basic_elem(changed_template_param, "Modelement")
+                    self.queries.save_obj(param_to_save, db, log)
+                    # and create new module-param relation
+                    new_pae2moe = self.queries.create_moduleitem(p2m.id_pae, param_to_save.id, changed_template_param.lvl, changed_template_param.order)
+                    pae2moe_to_save.append(new_pae2moe)
+
+        # 4.3 remapping relations between modules and params
+
+        for p2m in pae2moe:
+            if p2m.id_pae in old2new_modules and p2m.id_moe in old2new_params:
+                p2m.id_pae = old2new_modules[p2m.id_pae]
+                p2m.id_moe = old2new_params[p2m.id_moe]
+
+        # 4.4 creating new relations between new paths and created configuration
+
+        for i, old2new_path in enumerate(old2new_paths.iteritems()):
+            pathid2conf.append(self.queries.create_pathidconf(new_version_id, old2new_path[1], i))
+
+        # 4.5 remapping paths to modules
+
+        # 4.5.1 preparing necessary data
+
+        pathid2pae_dict = dict()
+        pae2paths_dict = dict()
+        for p2m in pathid2pae:
+            if p2m.id_parent is None:
+                parent_key = p2m.id_pathid
+            else:
+                parent_key = p2m.id_parent
+            if parent_key not in pathid2pae_dict:
+                pathid2pae_dict[parent_key] = {}
+            pathid2pae_dict[parent_key][p2m.id_pae] = p2m
+            if parent_key not in pae2paths_dict:
+                pae2paths_dict[parent_key] = {}
+            pae2paths_dict[parent_key][p2m.id_pathid] = p2m
+
+        # 4.5.2 creating new Pathitems objects for new relations
+
+        for parent_key in pathid2pae_dict:
+            if parent_key in changed_hierarchy:
+                cached_children_set = set(changed_hierarchy[parent_key].keys())
+                db_children_set = set(pathid2pae_dict[parent_key].keys())
+                added_elems = cached_children_set - db_children_set
+                for elem in added_elems:
+                    for pathid in pae2paths_dict[parent_key].keys():
+                        new_path2pae = self.queries.create_pathitem(elem, parent_key, pathid)
+                        index = pathid2pae.index(pae2paths_dict[parent_key][pathid])
+                        pathid2pae.insert(index, new_path2pae)
+
+        # if we even remove objects from array, bulk_save_objects saves everything. So, we feed this method with ne array,
+        # which contains only data which we need to save
+        pathid2pae_to_save = []
+        for p2m in pathid2pae:
+                if p2m.id_parent is not None:
+                    parent_key = p2m.id_parent
+                else:
+                    parent_key = p2m.id_pathid
+                if parent_key in changed_hierarchy and p2m.id_pae in changed_hierarchy[parent_key]:
+                    p2m.lvl = changed_hierarchy[parent_key][p2m.id_pae].lvl
+                    p2m.order = changed_hierarchy[parent_key][p2m.id_pae].order
+                # most important -- deleted relations has negative order, but they stays in cache to differentiate them
+                # from relations which wasn't saved yet
+                if p2m.order >= 0 and p2m.id_pae in old2new_modules and p2m.id_pathid in old2new_paths:
+                    p2m.id_pae = old2new_modules[p2m.id_pae]
+                    p2m.id_pathid = old2new_paths[p2m.id_pathid]
+                    pathid2pae_to_save.append(p2m)
+
+        # 5. saving new relations
+
+        self.queries.save_objects(pathid2conf, db, log)
+        self.queries.save_objects(pathid2pae_to_save, db, log)
+        self.queries.save_objects(pae2moe, db, log)
+        self.queries.save_objects(pae2tmpl, db, log)
+        self.queries.save_objects(pae2moe_to_save, db, log)
+
+        return old2new_paths
+
+    def save_ed_sources(self, changed_version_id, new_version_id, changed_params, changed_templates_params, db, log):
+
+        # 1. gathering data to copy
+
+        # 1.1 edsources and their params. Templates left unchanged
+
+        edsources = self.queries.getConfEDSource(changed_version_id, db, log)
+        conf2eds = self.queries.getConfToEDSRel(changed_version_id, db, log)
+        edsources_elements = []
+        new_edsources_elements = []
+        for ed_source in edsources:
+            edsources_elements.extend(self.queries.getEDSourceParams(ed_source.id, db, log))
+            # if one or more of the ed_source template params was changed
+            if ed_source.id_template in changed_templates_params:
+                for changed_template_param in changed_templates_params[ed_source.id_template].values():
+                    # create new param, and add it to the list to be saved
+                    param_to_save = self.queries.map_basic_elem(changed_template_param, "EDSElement")
+                    param_to_save.id_edsource = ed_source.id
+                    new_edsources_elements.append(param_to_save)
+
+        # 1.2 also, let's update values of changed params
+        for ed_source_param in edsources_elements:
+            if ed_source_param.id_edsource in changed_params and ed_source_param.name in changed_params[ed_source_param.id_edsource]:
+                ed_source_param.value = changed_params[ed_source_param.id_edsource][ed_source_param.name].value
+
+        # 2. detaching from db session, after that we can change it and it will not affect old versions
+
+        self.queries.detach_objects_from_session(edsources_elements, db, log)
+        self.queries.detach_objects_from_session(conf2eds, db, log)
+
+        # 3. saving copied data
+
+        old2new_edsources = self.queries.save_get_id_mapping(edsources, db, log)
+
+        # 4. modifying/updating data, creating some new instances
+
+        # 4.1 assigning params to new edsources
+
+        # it is just easier to save all params, copied and created, together
+        edsources_elements.extend(new_edsources_elements)
+
+        for ed_source_elem in edsources_elements:
+            ed_source_elem.id_edsource = old2new_edsources[ed_source_elem.id_edsource]
+
+        # 4.2 creating new relations between new edsources and created configuration
+
+        for c2esm in conf2eds:
+            c2esm.id_confver = new_version_id
+            c2esm.id_edsource = old2new_edsources[c2esm.id_edsource]
+
+        # 5. saving relations and params
+
+        self.queries.save_objects(conf2eds, db, log)
+        self.queries.save_objects(edsources_elements, db, log)
+
+    def save_services(self, changed_version_id, new_version_id, changed_params, changed_templates_params, db, log):
+
+        # 1. gathering data to copy
+
+        # 1.1 services and their params. Templates left unchanged
+
+        conf2srv = []
+        services = self.queries.getConfServices(changed_version_id, db, log)
+        serv_param_elements = []
+        new_serv_param_elements = []
+        for service in services:
+            serv_param_elements.extend(self.queries.getServiceParamElements(service.id, db, log))
+            # if one or more of the serv_param template params was changed
+            if service.id_template in changed_templates_params:
+                for changed_template_param in changed_templates_params[service.id_template].values():
+                    # create new param, and add it to the list to be saved
+                    param_to_save = self.queries.map_basic_elem(changed_template_param, "SrvElement")
+                    param_to_save.id_service = service.id
+                    new_serv_param_elements.append(param_to_save)
+
+        # 1.2 also, let's update values of changed params
+        for serv_param in serv_param_elements:
+            if serv_param.id_service in changed_params and serv_param.name in changed_params[serv_param.id_service]:
+                serv_param.value = changed_params[serv_param.id_service][serv_param.name].value
+
+        # 2. detaching from db session, after that we can change it and it will not affect old versions
+
+        self.queries.detach_objects_from_session(serv_param_elements, db, log)
+
+        # 3. saving copied data
+
+        old2new_services = self.queries.save_get_id_mapping(services, db, log)
+
+        # 4. modifying/updating data, creating some new instances
+
+        # 4.1 assigning params to new services
+
+        # it is just easier to save all params, copied and created, together
+        serv_param_elements.extend(new_serv_param_elements)
+
+        for service_param in serv_param_elements:
+            service_param.id_service = old2new_services[service_param.id_service]
+
+        # 4.2 creating new relations between new services and created configuration
+
+        for i, service in enumerate(services):
+            conf2srv.append(self.queries.create_conf2Srv(new_version_id, service.id, i))
+
+        # 5. saving relations and params
+
+        self.queries.save_objects(conf2srv, db, log)
+        self.queries.save_objects(serv_param_elements, db, log)
+
+    def save_streams_datasets(self, changed_version_id, new_version_id, old2new_paths, changed_dat2pats, changed_str2evc, cached_names, changed_evco_statements, db, log, cache_session):
+
+        # 1. gathering data to copy
+
+        # 1.1 streams, datasets, eventconfigs;
+
+        streams = self.queries.getConfStreams(changed_version_id, db, log)
+        evcontents = self.queries.getConfEventContents(changed_version_id, db, log)
+        datasets = self.queries.getConfDatasets(changed_version_id, db, log)
+        datasets_ids = (dataset.id for dataset in datasets)
+        streams_ids = (stream.id for stream in streams)
+
+        evcontents_dict = dict((x.id, x) for x in evcontents)
+        evcotostats = []
+        evcotostats_dict = dict()
+        for evcontent in evcontents:
+            if evcontent.id not in changed_evco_statements:
+                evco_stats = self.queries.getEvCoToStat(evcontent.id, db, log)
+                evcotostats.extend(evco_stats)
+                evcotostats_dict[evcontent.id] = evco_stats
+
+        # 1.2 relations with each other and configuration
+
+        dat2pats = self.queries.getAllDatsPatsRels(changed_version_id, datasets_ids, db, log)
+        evCoToStr = self.queries.getEvCoToStream(changed_version_id, db, log)
+        pathid2oum = self.queries.getPathidToOum(streams_ids, db, log)
+        conf2evco = self.queries.get_conf2evco_rels(changed_version_id, db, log)
+        conf2st_dat = self.queries.getConfStrDatRels(changed_version_id, db, log)
+
+        # 2. detaching from db session, after that we can change it and it will not affect old versions
+
+        self.queries.detach_objects_from_session(dat2pats, db, log)
+        self.queries.detach_objects_from_session(evCoToStr, db, log)
+        self.queries.detach_objects_from_session(pathid2oum, db, log)
+        self.queries.detach_objects_from_session(conf2evco, db, log)
+        self.queries.detach_objects_from_session(conf2st_dat, db, log)
+        self.queries.detach_objects_from_session(evcotostats, db, log)
+
+        # 3. saving copied data
+
+        old2new_streams = self.queries.save_get_id_mapping(streams, db, log)
+        old2new_datasets = self.queries.save_get_id_mapping(datasets, db, log)
+        old2new_evco = self.queries.save_get_id_mapping(evcontents, db, log)
+
+        # 4. modifying/updating data, creating some new instances
+
+        # 4.1 assigning new datasets and streams to congiguration
+
+        for c2st_dat in conf2st_dat:
+            c2st_dat.id_confver = new_version_id
+            c2st_dat.id_streamid = old2new_streams[c2st_dat.id_streamid]
+            c2st_dat.id_datasetid = old2new_datasets[c2st_dat.id_datasetid]
+
+        # 4.2 mapping created paths to new datasets (relation to streams is not in use in this app, just to keep db consistent)
+
+        for d2p in dat2pats:
+            # this way we skip all removed relations
+            if d2p.id_datasetid in changed_dat2pats and d2p.id_pathid in changed_dat2pats[d2p.id_datasetid]:
+                    changed_dat2pats[d2p.id_datasetid].remove(d2p.id_pathid)
+                    d2p.id_pathid = old2new_paths[d2p.id_pathid]
+                    d2p.id_datasetid = old2new_datasets[d2p.id_datasetid]
+                    d2p.id_streamid = old2new_streams[d2p.id_streamid]
+
+        # this way we add all path ids left for dataset - means added according to the previous version
+        for dataset_id in changed_dat2pats.keys():
+            for path_id in changed_dat2pats[dataset_id]:
+                new_rel = self.queries.create_path2strDataset(old2new_datasets[dataset_id], old2new_paths[path_id])
+                # There is no stream_id relation because it is not actually in use
+                dat2pats.append(new_rel)
+
+         # 4.3 updating ids for pathid2oum relations
+
+        for pid2oum in pathid2oum:
+            if pid2oum.id_pathid in old2new_paths and pid2oum.id_streamid in old2new_streams:
+                pid2oum.id_pathid = old2new_paths[pid2oum.id_pathid]
+                pid2oum.id_streamid = old2new_streams[pid2oum.id_streamid]
+
+        # 4.4 mapping evcontents to streams
+
+        conf2evco_to_save = []
+        for e2str in evCoToStr:
+            if (e2str.id_streamid in changed_str2evc or e2str.id_evcoid in old2new_evco) and e2str.id_streamid in old2new_streams:
+                # if stream is now related to other evco, remap with value from cache
+                if e2str.id_streamid in changed_str2evc:
+                    if changed_str2evc[e2str.id_streamid] > 0:
+                        e2str.id_evcoid = evcontents_dict[changed_str2evc[e2str.id_streamid]].id
+                    else:
+                        # if it is new evco, save it and add to conf2evco array to be saved too. Also, map stream to new evco
+                        evcoid_with_name = self.queries.getEventContentIdByName(cached_names[e2str.id_streamid].name, db, log)
+                        if evcoid_with_name is None:
+                            new_evco = self.queries.create_event_content(cached_names[e2str.id_streamid].name)
+                            self.queries.save_obj(new_evco, db, log)
+                            evcoid_with_name = self.queries.create_event_content_id(new_evco.id)
+                            self.queries.save_obj(evcoid_with_name, db, log)
+                        new_conf2evco = self.queries.create_conf2evco(evcoid_with_name.id, new_version_id)
+                        conf2evco_to_save.append(new_conf2evco)
+                        old_conf2evco = self.queries.create_conf2evco(evcoid_with_name.id, changed_version_id)
+                        conf2evco_to_save.append(old_conf2evco)
+                        self.cache.update_external_id(cache_session, cached_names[e2str.id_streamid].int_evco_id, evcoid_with_name.id, 'evc', 0, log)
+                        for statementrank, statement in changed_evco_statements[changed_str2evc[e2str.id_streamid]].items():
+                            self.queries.save_obj(statement, db, log)
+                            evc2stat = self.queries.create_evc2stat(evcoid_with_name.id, statement.id, statementrank)
+                            evcotostats.append(evc2stat)
+                        e2str.id_evcoid = new_conf2evco.id_evcoid
+                else:
+                    e2str.id_evcoid = old2new_evco[e2str.id_evcoid]
+                e2str.id_streamid = old2new_streams[e2str.id_streamid]
+
+        # 4.5 mapping evcontents to configuration
+
+        for c2evco in conf2evco:
+            c2evco.id_confver = new_version_id
+            c2evco.id_evcoid = old2new_evco[c2evco.id_evcoid]
+
+        # 4.6 mapping evco statements to new evco
+
+        for old_id, new_id in old2new_evco.items():
+            # if there are changes in cache for evco, map them
+            if old_id in changed_evco_statements:
+                for statementrank, statement in changed_evco_statements[old_id].items():
+                    self.queries.save_obj(statement, db, log)
+                    evc2stat = self.queries.create_evc2stat(new_id, statement.id, statementrank)
+                    evcotostats.append(evc2stat)
+            # otherwise remap statements from source config
+            elif old_id in evcotostats_dict:
+                for old_evco in evcotostats_dict[old_id]:
+                    old_evco.id_evcoid = new_id
+
+        # 5. saving relations and params
+
+        self.queries.save_objects(dat2pats, db, log)
+        self.queries.save_objects(evCoToStr, db, log)
+        self.queries.save_objects(pathid2oum, db, log)
+        self.queries.save_objects(conf2evco, db, log)
+        self.queries.save_objects(conf2evco_to_save, db, log)
+        self.queries.save_objects(conf2st_dat, db, log)
+        self.queries.save_objects(evcotostats, db, log)
+
+    def save_es_modules(self, changed_version_id, new_version_id, changed_params, changed_templates_params, db, log):
+
+        # 1. gathering data to copy
+
+        # 1.1 esmodules and their params. Templates left unchanged
+
+        esmodules = self.queries.getConfESModules(changed_version_id, db, log)
+        conf2esm = self.queries.getConfToESMRel(changed_version_id, db, log)
+        esmodules_elements = []
+        new_esmodules_elements = []
+        for es_module in esmodules:
+            esmodules_elements.extend(self.queries.getESModParams(es_module.id, db, log))
+            # if one or more of the esmodule template params was changed
+            if es_module.id_template in changed_templates_params:
+                for changed_template_param in changed_templates_params[es_module.id_template].values():
+                    # create new param, and add it to the list to be saved
+                    param_to_save = self.queries.map_basic_elem(changed_template_param, "ESMElement")
+                    param_to_save.id_esmodule = es_module.id
+                    new_esmodules_elements.append(param_to_save)
+
+        # 1.2 also, let's update values of changed params
+        for esmodule_element in esmodules_elements:
+            if esmodule_element.id_esmodule in changed_params and esmodule_element.name in changed_params[esmodule_element.id_esmodule]:
+                esmodule_element.value = changed_params[esmodule_element.id_esmodule][esmodule_element.name].value
+
+        # 2. detaching from db session, after that we can change it and it will not affect old versions
+
+        self.queries.detach_objects_from_session(esmodules_elements, db, log)
+        self.queries.detach_objects_from_session(conf2esm, db, log)
+
+        # 3. saving copied data
+
+        old2new_esmodules = self.queries.save_get_id_mapping(esmodules, db, log)
+
+        # 4. modifying/updating data, creating some new instances
+
+        # 4.1 assigning params to new esmodules
+
+        # it is just easier to save all params, copied and created, together
+        esmodules_elements.extend(new_esmodules_elements)
+
+        for es_module_elem in esmodules_elements:
+            es_module_elem.id_esmodule = old2new_esmodules[es_module_elem.id_esmodule]
+
+        # 4.2 creating new relations between new esmodules and created configuration
+
+        for c2esm in conf2esm:
+            c2esm.id_confver = new_version_id
+            c2esm.id_esmodule = old2new_esmodules[c2esm.id_esmodule]
+
+        # 5. saving relations and params
+
+        self.queries.save_objects(conf2esm, db, log)
+        self.queries.save_objects(esmodules_elements, db, log)
+
+    def save_es_sources(self, changed_version_id, new_version_id, changed_params, changed_templates_params, db, log):
+
+        # 1. gathering data to copy
+
+        # 1.1 essources and their params. Templates left unchanged
+
+        essources = self.queries.getConfESSource(changed_version_id, db, log)
+        conf2ess = self.queries.getConfToESSRel(changed_version_id, db, log)
+        essources_elements = []
+        new_essource_elements = []
+        for es_source in essources:
+            essources_elements.extend(self.queries.getESSourceParams(es_source.id, db, log))
+            # if one or more of the es_source template params was changed
+            if es_source.id_template in changed_templates_params:
+                for changed_template_param in changed_templates_params[es_source.id_template].values():
+                    # create new param, and add it to the list to be saved
+                    param_to_save = self.queries.map_basic_elem(changed_template_param, "ESSElement")
+                    param_to_save.id_essource = es_source.id
+                    new_essource_elements.append(param_to_save)
+
+        # 1.2 also, let's update values of changed params
+        for essource_element in essources_elements:
+            if essource_element.id_essource in changed_params and essource_element.name in changed_params[essource_element.id_essource]:
+                essource_element.value = changed_params[essource_element.id_essource][essource_element.name].value
+
+        # 2. detaching from db session, after that we can change it and it will not affect old versions
+
+        self.queries.detach_objects_from_session(essources_elements, db, log)
+        self.queries.detach_objects_from_session(conf2ess, db, log)
+
+        # 3. saving copied data
+
+        old2new_essources = self.queries.save_get_id_mapping(essources, db, log)
+
+        # 4. modifying/updating data, creating some new instances
+
+        # 4.1 assigning params to new essources
+
+        # it is just easier to save all params, copied and created, together
+        essources_elements.extend(new_essource_elements)
+
+        for es_source_elem in essources_elements:
+            es_source_elem.id_essource = old2new_essources[es_source_elem.id_essource]
+
+        # 4.2 creating new relations between new essources and created configuration
+
+        for c2esm in conf2ess:
+            c2esm.id_confver = new_version_id
+            c2esm.id_essource = old2new_essources[c2esm.id_essource]
+
+        # 5. saving relations and params
+
+        self.queries.save_objects(conf2ess, db, log)
+        self.queries.save_objects(essources_elements, db, log)
+
+    def save_global_pset(self, changed_version_id, new_version_id, changed_params, db, log):
+
+        # 1. gathering data to copy
+
+        # 1.1 gpsets and their params
+
+        gpsets = self.queries.getConfGPsets(changed_version_id, db, log)
+        conf2gpsets = self.queries.get_conf2GPSets_relations(changed_version_id, db, log)
+        gpsets_elements = []
+        for gp_set in gpsets:
+            gpsets_elements.extend(self.queries.getGpsetElements(gp_set.id, db, log))
+
+        # 1.2 let's update values of changed params
+        for gp_set in gpsets_elements:
+            if gp_set.id_gpset in changed_params and gp_set.name in changed_params[gp_set.id_gpset]:
+                gp_set.value = changed_params[gp_set.id_gpset][gp_set.name].value
+
+        # 2. detaching from db session, after that we can change it and it will not affect old versions
+
+        self.queries.detach_objects_from_session(gpsets_elements, db, log)
+        self.queries.detach_objects_from_session(conf2gpsets, db, log)
+
+        # 3. saving copied data
+
+        old2new_gpsets = self.queries.save_get_id_mapping(gpsets, db, log)
+
+        # 4. modifying/updating data, creating some new instances
+
+        # 4.1 assigning params to new gpsets
+
+        for gp_set_elem in gpsets_elements:
+            gp_set_elem.id_gpset = old2new_gpsets[gp_set_elem.id_gpset]
+
+        # 4.2 creating new relations between new gpsets and created configuration
+
+        for c2gpset in conf2gpsets:
+            c2gpset.id_confver = new_version_id
+            c2gpset.id_gpset = old2new_gpsets[c2gpset.id_gpset]
+
+        # 5. saving relations and params
+
+        self.queries.save_objects(conf2gpsets, db, log)
+        self.queries.save_objects(gpsets_elements, db, log)
 
     #Returns all the services present in a Configuration version
     # If a Config id is given, it will retrieve the last version
@@ -1262,18 +1963,14 @@ class Exposed(object):
         for m in services:
             if (templates_dict.has_key(m.id_template)):
                 temp = templates_dict.get(m.id_template)
-
-                srv = Service(m.id, m.id_template, id_rel, temp.name, "")
-
-                srv.gid = cache.srvMappingDictPut(src, m.id, "srv", cache_session, log)
-
+                internal_id = cache.get_internal_id(cache_session, m.id, "srv", src, log)
+                srv = Service(internal_id, m.id_template, id_rel, temp.name, "")
             else:
                 log.error('ERROR: Service key error') #print "ERROR KEY"
 
             if (srv != None):
                 resp.children.append(srv)
 
-        print "len: ", len(resp.children)
         resp.success = True
 
         output = schema.dump(resp)
@@ -1286,7 +1983,7 @@ class Exposed(object):
     #@params: sid: service id
     #         db: database session object
     #
-    def getServiceItems(self, sid_internal=-2, db = None, log = None, src = 0, request = None):
+    def getServiceItems(self, sid_internal=-2, db = None, log = None, src = 0, request = None, verid = -1):
 
         if (sid_internal == -2 or db == None):
             log.error('ERROR: getServiceItems - input parameters error' + self.log_arguments(sid_internal=sid_internal))
@@ -1297,15 +1994,14 @@ class Exposed(object):
         resp = Response()
         schema = ResponseParamSchema()
 
-        service_params = cache.get_params(sid_internal, cache_session, log)
+        service_params = cache.get_params(sid_internal, verid, cache_session, log)
         if service_params is None:
-            sid_external = cache.srvMappingDictGetExternal(sid_internal, src, "srv", cache_session, log)
+            sid_external = cache.get_external_id(cache_session, sid_internal, "srv", src, log)
             service_params = self.params_builder.serviceParamsBuilder(sid_external, self.queries, db, log)
             for param in service_params:
                 param.module_id = sid_internal
 
-            cache.put_params(sid_internal, service_params, cache_session, log)
-            print('added to cache')
+            cache.put_params(sid_internal, service_params, verid, cache_session, log)
 
         if service_params is None:
             return None
@@ -1332,7 +2028,7 @@ class Exposed(object):
 
         cache = self.cache
         cache_session = request.db_cache
-        
+
         if (cnf != -2 and cnf != -1):
             cnf = cache.folMappingDictGetExternal(cnf, src, "cnf", cache_session, log)
 
@@ -1355,8 +2051,10 @@ class Exposed(object):
             relations = self.queries.getConfStrDatRels(ver_id, db, log)
 
             evcontents = self.queries.getConfEventContents(ver_id, db, log)
+            evcontents_cached = cache.get_evcon_names(ver_id, cache_session, log)
     #        evcostatements = self.queries.getConfEventContents(ver_id, db, log)
             evCoToStr = self.queries.getEvCoToStream(ver_id, db, log)
+            evCoToStr_cached = cache.get_streams_events_relations(ver_id, cache_session, log)
 
         except:
             log.error('ERROR: Query getConfStreams/getConfDatasets/getConfStrDatRels/getConfEventContents/getEvCoToStream Error')
@@ -1366,55 +2064,58 @@ class Exposed(object):
 #            return None
 
         relations_dict = dict((x.id_datasetid, x.id_streamid) for x in relations)
-        streams_dict = dict((x.id, x) for x in streams)
-        evCoToStr_dict = dict((x.id_streamid, x.id_evcoid) for x in evCoToStr)
-
-
+        evcontents_dict = dict((x.id, x) for x in evcontents)
+        evCoToStr_dict = dict((x.id_streamid, evcontents_dict.get(x.id_evcoid).id) for x in evCoToStr)
+        evCoToStr_dict_cached = dict((x['id_streamid'], x['id_evcoid']) for x in evCoToStr_cached)
+        # TODO: this logic must be checked
         #---- Building evco ---------------
         evco_dict = {}
         for e in evcontents:
-            si = Streamitem(e.id,-1, e.name,"evc")
-
-            si.gid = cache.strMappingDictPut(src, e.id, "evc", cache_session, log)
+            evco_internal_id = cache.get_internal_id(cache_session, e.id, "evc", src, log)
+            si = Streamitem(evco_internal_id,-1, e.name,"evc")
 
             si.id_stream = -2
-            evco_dict[e.id] = si
+            evco_dict[evco_internal_id] = si
+        # adding event configs which are not saved to db yet, but created in cache:
+        for ec in evcontents_cached:
+            if ec.internal_id not in evco_dict:
+                si = Streamitem(ec.internal_id, -1, ec.name, "evc")
+                si.id_stream = -2
+                evco_dict[ec.internal_id] = si
 
         #---- Building streams and datasets
         evcoOut = []
         streams_dict = {}
         for s in streams:
-            si = Streamitem(s.id, s.fractodisk, s.name,"str")
+            stream_internal_id = cache.get_internal_id(cache_session, s.id, "str", src, log)
+            si = Streamitem(stream_internal_id, s.fractodisk, s.name,"str")
             streams_dict[s.id] = si
-            if(evCoToStr_dict.has_key(s.id)):
-                evcoid = evCoToStr_dict.get(s.id)
-                evco = evco_dict.get(evcoid)
+            if (stream_internal_id in evCoToStr_dict_cached) or (s.id in evCoToStr_dict):
+                if stream_internal_id in evCoToStr_dict_cached:
+                    evco_internal_id = evCoToStr_dict_cached.get(stream_internal_id)
+                else:
+                    evcoid = evCoToStr_dict.get(s.id)
+                    evco_internal_id = cache.get_internal_id(cache_session, evcoid, "evc", src, log)
+                    cache.add_stream_event_relation(stream_internal_id, evco_internal_id, ver_id, cache_session, log)
+                evco = evco_dict.get(evco_internal_id)
                 if (evco.id_stream == -2):
-                    evco.id_stream = s.id
-                    evco_dict[evco.id] = evco
+                    evco.id_stream = stream_internal_id
+                    evco_dict[evco_internal_id] = evco
 
                     si.children.append(evco)
                 else:
-                    new_evco = Streamitem(evco.id,-1, evco.name,"evc")
-
-                    new_evco.gid = cache.strMappingDictPut(src, evco.id, "evc", cache_session, log, 0)
-
+                    new_evco = Streamitem(evco_internal_id,-1, evco.name,"evc")
                     si.children.append(new_evco)
             else:
                 evcoOut.append(si)
-
-
-            si.gid = cache.strMappingDictPut(src, s.id, "str", cache_session, log)
-
 	
         for d in datasets:
             if (d.id == -1):
                 log.error('WARNING: Unassigned Paths')
 
             else:
-                si = Streamitem(d.id,-1, d.name,"dat")
-
-                si.gid = cache.strMappingDictPut(src, d.id, "dat", cache_session, log)
+                ds_internal_id = cache.get_internal_id(cache_session, d.id, "dat", src, log)
+                si = Streamitem(ds_internal_id, -1, d.name,"dat")
                 streamid = relations_dict.get(d.id)
                 streams_dict.get(streamid).children.append(si)
 
@@ -1441,10 +2142,10 @@ class Exposed(object):
     #         db: database session object
     #
 
-    def getEvcStatements(self, evc=-2, db = None, log = None, request = None, src = 0):
+    def getEvcStatements(self, internal_evc_id=-2, verid=-1, db = None, log = None, request = None, src = 0):
 
-        if (evc==-2 or db == None):
-            log.error('ERROR: getEvcStatements - input parameters error' + self.log_arguments(evc=evc))
+        if (internal_evc_id==-2 or db == None):
+            log.error('ERROR: getEvcStatements - input parameters error' + self.log_arguments(evc=internal_evc_id))
 
         cache = self.cache
         cache_session = request.db_cache
@@ -1453,29 +2154,35 @@ class Exposed(object):
         evcostatements = None
         evcotostats = None
 
-        evc = cache.strMappingDictGetExternal(evc, src, "evc", cache_session, log)
+        evcostatements_wraped = cache.get_event_statements(internal_evc_id, verid, cache_session, log)
 
-        try:
-            evcostatements = self.queries.getEvCoStatements(evc, db, log)
-            evcotostats = self.queries.getEvCoToStat(evc, db, log)
+        if evcostatements_wraped is None:
+            external_evc_id = cache.get_external_id(cache_session, internal_evc_id, "evc", src, log)
 
-        except:
-            log.error('ERROR: Query getEvCoStatements/getEvCoToStat Error')
+            try:
+                evcostatements = self.queries.getEvCoStatements(external_evc_id, db, log)
+                evcotostats = self.queries.getEvCoToStat(external_evc_id, db, log)
+
+            except:
+                log.error('ERROR: Query getEvCoStatements/getEvCoToStat Error')
+                return None
+
+            evcotostats_dict = dict((x.id_stat, x.statementrank) for x in evcotostats)
+            evcostatements_wraped = []
+            for st in evcostatements:
+                r = evcotostats_dict.get(st.id)
+                st.statementrank = r
+                st.internal_id = internal_evc_id
+                evcostatements_wraped.append(EvCoStatement(st.internal_id, st.modulel, st.classn, st.extran, st.processn, st.statementtype, st.statementrank))
+            cache.put_event_statements(internal_evc_id, evcostatements_wraped, verid, cache_session, log)
+
+        if evcostatements_wraped is None:
             return None
 
-#        if (evcostatements == None or evcotostats == None):
-#            return None
-
-        evcotostats_dict = dict((x.id_stat, x.statementrank) for x in evcotostats)
-
-        for st in evcostatements:
-            r = evcotostats_dict.get(st.id)
-            st.statementrank = r
-
-        evcostatements.sort(key=lambda par: par.statementrank)
+        evcostatements_wraped.sort(key=lambda par: par.statementrank)
 
         resp = Response()
-        resp.children = evcostatements
+        resp.children = evcostatements_wraped
         schema = ResponseEvcStatementSchema()
 
         resp.success = True
@@ -1553,10 +2260,8 @@ class Exposed(object):
                 c2e = conf2esm_dict.get(m.id)
                 internal_id = cache.get_internal_id(cache_session, m.id, "es_mod", src, log)
                 esm = ESModuleDetails(internal_id, m.id_template, m.name, temp.name, c2e)
-                esm.gid = internal_id
-
             else:
-                log.error('ERROR: ES Modules Error Key') 
+                log.error('ERROR: ES Modules Error Key')
 
             if (esm != None):
                 esmodules.append(esm)
@@ -1573,7 +2278,7 @@ class Exposed(object):
         return output.data
 
 
-    def getESModItems(self, internal_esmod_id, db, src=0, log = None, request=None):
+    def getESModItems(self, internal_esmod_id, db, src=0, log = None, request=None, verid = -1):
 
         if (internal_esmod_id == -2 or db == None):
             log.error('ERROR: getESModItems - input parameters error' + self.log_arguments(internal_esmod_id=internal_esmod_id))
@@ -1584,15 +2289,14 @@ class Exposed(object):
         cache = self.cache
         cache_session = request.db_cache
 
-        es_mod_params = cache.get_params(internal_esmod_id, cache_session, log)
+        es_mod_params = cache.get_params(internal_esmod_id, verid, cache_session, log)
         if es_mod_params is None:
             external_esmod_id = cache.get_external_id(cache_session, internal_esmod_id, "es_mod", src, log)
             es_mod_params = self.params_builder.esModuleParamsBuilder(external_esmod_id, self.queries, db, log)
             for param in es_mod_params:
                 param.module_id = internal_esmod_id
 
-            cache.put_params(internal_esmod_id, es_mod_params, cache_session, log)
-            print('added to cache')
+            cache.put_params(internal_esmod_id, es_mod_params, verid, cache_session, log)
 
         if es_mod_params is None:
             return None
@@ -1605,55 +2309,58 @@ class Exposed(object):
 
 
     def skipSequence(self, counter, items, level):
-        while(counter < len(items) and items[counter].lvl >= level):
+        while counter < len(items) and items[counter].lvl >= level:
             counter = counter + 1
         return counter
-    
-    def getSequenceChildren(self, counter, written_sequences, items, elements_dict, level, built_sequences, idgen_new,src,request,log):
+
+    def getSequenceChildren(self, counter, written_sequences, items, elements_dict, level, built_sequences,src,request,log):
         children = []
 	cache = self.cache
         cache_session = request.db_cache
-        
+
         while(counter < len(items) and items[counter].lvl == level):
-            elem = elements_dict[items[counter].id_pae]
-            item = Pathitem(items[counter].id_pae, elem.name, items[counter].id_pathid, elem.paetype, items[counter].id_parent, items[counter].lvl, items[counter].order, items[counter].operator)
-   
+            if hasattr(items[counter], "internal_id"):
+                item = items[counter]
+            else:
+                elem = elements_dict[items[counter].id_pae]
+                internal_id = cache.get_internal_id(cache_session, items[counter].id_pae, "seq", src, log)
+                item = Pathitem(internal_id, elem.name, items[counter].id_pathid, elem.paetype, items[counter].id_parent, items[counter].lvl, items[counter].order, items[counter].operator)
+
             self.simple_counter = self.simple_counter + 1
-   
+
+            counter = counter + 1
             if item.paetype == 2:
-                item.gid = cache.seqMappingDictPut(src, items[counter].id_pae, "seq", cache_session, log,0)
-                counter = counter + 1
                 if item.name in written_sequences:
-                    item.expanded = False     
-                    counter, new_children, written_sequences, built_sequences, idgen_new = self.getSequenceChildren(counter, written_sequences, items, elements_dict, item.lvl+1, built_sequences, idgen_new, src,request,log)
+                    item.expanded = False
+                    counter, new_children, written_sequences, built_sequences = self.getSequenceChildren(counter, written_sequences, items, elements_dict, item.lvl+1, built_sequences, src,request,log)
 
                     for child in new_children:
                         item.children.append(child)
+                    item.children.sort(key=lambda x: x.order, reverse=False)
                 else:
                     item.expanded = False
-                    counter, new_children, written_sequences, built_sequences, idgen_new = self.getSequenceChildren(counter, written_sequences, items, elements_dict, item.lvl+1, built_sequences, idgen_new,src,request,log)
+                    counter, new_children, written_sequences, built_sequences = self.getSequenceChildren(counter, written_sequences, items, elements_dict, item.lvl+1, built_sequences,src,request,log)
 
                     for child in new_children:
                         item.children.append(child)
+                    item.children.sort(key=lambda x: x.order, reverse=False)
 
                     written_sequences.add(item.name)
-                    built_sequences.add(item)
+                    built_sequences.append(item)
 
-            elif item.paetype == 1:
-                item.gid = cache.seqMappingDictPut(src, items[counter].id_pae, "mod", cache_session, log,0)
-                counter = counter + 1
-                
             children.append(item)
-            
-        return counter, children, written_sequences, built_sequences, idgen_new
-    
+
+        children.sort(key=lambda x: x.order, reverse=False)
+
+        return counter, children, written_sequences, built_sequences
+
     def getAllSequences(self, cnf=-2, ver=-2, db = None, log = None, request = None, src = 0):
 
         #params check
         if (cnf == -1 or db == None or ver == -1):
 
             log.error('ERROR: getAllSequences - input parameters error')
-        
+
         queries = self.queries
         cache = self.cache
         cache_session = request.db_cache
@@ -1675,62 +2382,70 @@ class Exposed(object):
         #Retreive all the sequences and their items of the path
 
         try:
-            paths    = queries.getPaths(ver_id, db, log)
-            endpaths = queries.getEndPaths(ver_id, db, log)
+            paths = self.getPathsFromCache(cache_session, db, ver_id, log, src)
+            endpaths = self.getEndPathsFromCache(cache_session, db, ver_id, log, src)
         except Exception as e:
             msg = 'ERROR: getAllSequences: error querying database for Paths and EndPaths:\n' + e.args[0]
             log.error(msg)
 
-        built_sequences = set()
+        built_sequences = []
         written_sequences = set()
         elements = None
         items = None
+        items_to_save = list()
 
         for path in itertools.chain(paths, endpaths):
+            cached_items = cache.getCompletePathSequencesItems(cache_session, path.internal_id,  version, log)
+            external_id = cache.get_external_id(cache_session, path.internal_id, "pat", src, log)
             try:
-                elements = queries.getCompletePathSequences(path.id, ver_id, db, log)
-                items    = queries.getCompletePathSequencesItems(path.id, ver_id, db, log)
+                elements = queries.getCompletePathSequences(external_id, ver_id, db, log)
+                if len(cached_items) > 0:
+                    items = cached_items
+                else:
+                    items = queries.getCompletePathSequencesItems(external_id, ver_id, db, log)
             except Exception as e:
                 msg = 'ERROR: getSequences: error querying database for getCompletePathSequences and Items:\n' + e.args[0]
-                self.logger.error(msg)
+                log.error(msg)
 #                raise
 
             elements_dict = dict((element.id, element) for element in elements)
 
             counter = 0
-            idgen_new = 1
 
             while counter < len(items):
-                elem = elements_dict[items[counter].id_pae]
-                item = Pathitem(items[counter].id_pae, elem.name, items[counter].id_pathid, elem.paetype, items[counter].id_parent, items[counter].lvl, items[counter].order, items[counter].operator)
+                if hasattr(items[counter], "internal_id"):
+                    item = items[counter]
+                else:
+                    elem = elements_dict[items[counter].id_pae]
+                    internal_id = cache.get_internal_id(cache_session, items[counter].id_pae, "seq", src, log)
+                    item = Pathitem(internal_id, elem.name, items[counter].id_pathid, elem.paetype, items[counter].id_parent, items[counter].lvl, items[counter].order, items[counter].operator)
+                    items_to_save.append(item)
 
                 self.simple_counter = self.simple_counter + 1
 
-                if item.paetype == 2:
-                    item.gid = cache.seqMappingDictPut(src, items[counter].id_pae, "seq", cache_session, log,0)
-                    counter = counter + 1
-                    if item.name in written_sequences:
-                        counter = self.skipSequence(counter, items, item.lvl+1)
-                    else:
-                        counter, new_children, written_sequences, built_sequences, idgen_new = self.getSequenceChildren(counter, written_sequences, items, elements_dict, item.lvl+1, built_sequences, idgen_new,src, request,log)
-
-                        for child in new_children:
-                            item.children.append(child)
-
-                        written_sequences.add(item.name)
-                        item.expanded = False
-                        built_sequences.add(item)
-
+                counter = counter + 1
+                if item.name in written_sequences:
+                    counter = self.skipSequence(counter, items, item.lvl+1)
                 else:
-                    counter = counter + 1
+                    counter, new_children, written_sequences, built_sequences = self.getSequenceChildren(counter, written_sequences, items, elements_dict, item.lvl+1, built_sequences,src, request,log)
 
+                    for child in new_children:
+                        item.children.append(child)
+                    item.children.sort(key=lambda x: x.order, reverse=False)
+
+                    written_sequences.add(item.name)
+                    item.expanded = False
+                    built_sequences.append(item)
+                    cache.put_path_items(path.internal_id, items_to_save, ver, cache_session, log)
+
+        built_sequences = sorted(built_sequences, key=lambda x: x.name, reverse=False)
         resp.success = True
         resp.children = built_sequences
-        
+
         output = schema.dump(resp)
-        
+
         return output.data
-        
+
 
 
     def getOUTModuleDetails(self, mod_id = -2, pat_id = -2, db = None, log = None, request = None, src = 0):
@@ -1743,7 +2458,7 @@ class Exposed(object):
             log.error('ERROR: getOUTModuleDetails - input parameters error' + self.log_arguments(mod_id=mod_id, pat_id=pat_id))
 
         # is it really mod id or pat id?
-        external_mod_id = cache.patMappingDictGetExternal(mod_id, src, "oum", cache_session, log)
+        external_mod_id = cache.get_external_id(cache_session, mod_id, "oum", src, log)
 
         resp = Response()
         schema = ResponseOutputModuleDetailsSchema()
@@ -1776,18 +2491,18 @@ class Exposed(object):
     #@params: sid: service id
     #         db: database session object
     #
-    def getGpsetItems(self, internal_gpset_id=-2, db = None, log = None, request = None, src = 0):
+    def getGpsetItems(self, internal_gpset_id=-2, db = None, log = None, request = None, verid = -1, src = 0):
 
         if (internal_gpset_id == -2 or db == None):
             log.error('ERROR: getGpsetItems - input parameters error' + self.log_arguments(internal_gpset_id=internal_gpset_id))
-        
+
         cache = self.cache
         cache_session = request.db_cache
 
         resp = Response()
         schema = ResponseParamSchema()
 
-        gpset_params = cache.get_params(internal_gpset_id, cache_session, log)
+        gpset_params = cache.get_params(internal_gpset_id, verid, cache_session, log)
 
         if gpset_params is None:
             external_gpset_id = cache.gpsMappingDictGetExternal(internal_gpset_id, src, "gps", cache_session, log)
@@ -1795,8 +2510,7 @@ class Exposed(object):
             for param in gpset_params:
                 param.module_id = internal_gpset_id
 
-            cache.put_params(internal_gpset_id, gpset_params, cache_session, log)
-            print('added to cache')
+            cache.put_params(internal_gpset_id, gpset_params, verid, cache_session, log)
 
         if gpset_params is None:
             return None
@@ -1852,11 +2566,10 @@ class Exposed(object):
         for m in gpsets:
             gps_internal_id = cache.gpsMappingDictPut(src, m.id, "gps", cache_session, log)
             gps = GlobalPset(gps_internal_id, m.name, m.tracked)
-            gps.gid = gps_internal_id
             if (gps != None):
                 resp.children.append(gps)
             else:
-                log.error('ERROR: GPSets Error Key') 
+                log.error('ERROR: GPSets Error Key')
 
         print "len: ", len(resp.children)
         resp.success = True
@@ -1922,7 +2635,6 @@ class Exposed(object):
                 c2e = conf2eds_dict[m.id]
                 internal_id = cache.get_internal_id(cache_session, m.id, "ed_source", src, log)
                 eds = EDSource(internal_id, m.id_template, "Source", temp.name, c2e)
-                eds.gid = internal_id
                 edsources.append(eds)
             else:
                 log.error('ERROR: EDSource key error')
@@ -1937,7 +2649,7 @@ class Exposed(object):
 
         return output.data
 
-    def getEDSourceItems(self, internal_ed_source_id, db, src=0, log = None, request=None):
+    def getEDSourceItems(self, internal_ed_source_id, db, src=0, log = None, request=None, verid = -1):
 
         if (internal_ed_source_id == -2 or db == None):
             log.error('ERROR: getEDSourceItems - input parameters error' + self.log_arguments(edsid=internal_ed_source_id))
@@ -1948,7 +2660,7 @@ class Exposed(object):
         resp = Response()
         schema = ResponseParamSchema()
 
-        ed_source_params = cache.get_params(internal_ed_source_id, cache_session, log)
+        ed_source_params = cache.get_params(internal_ed_source_id, verid, cache_session, log)
 
         if ed_source_params is None:
             external_ed_source_id = cache.get_external_id(cache_session, internal_ed_source_id, "ed_source", src, log)
@@ -1957,8 +2669,7 @@ class Exposed(object):
             for param in ed_source_params:
                 param.module_id = internal_ed_source_id
 
-            cache.put_params(internal_ed_source_id, ed_source_params, cache_session, log)
-            print('added to cache')
+            cache.put_params(internal_ed_source_id, ed_source_params, verid, cache_session, log)
 
         if ed_source_params is None:
             return None
@@ -2026,7 +2737,6 @@ class Exposed(object):
                 c2e = conf2ess_dict.get(m.id)
                 internal_id = cache.get_internal_id(cache_session, m.id, "es_source", src, log)
                 ess = ESSource(internal_id, m.id_template, m.name, temp.name, c2e)
-                ess.gid = internal_id
 
             else:
                 log.error('ERROR: ES source Key') #print "ERROR KEY"
@@ -2045,7 +2755,7 @@ class Exposed(object):
 
         return output.data
 
-    def getESSourceItems(self, internal_essource_id, db, src=0, log = None, request=None):
+    def getESSourceItems(self, internal_essource_id, db, src=0, log = None, request=None, verid = -1):
 
         if (internal_essource_id == -2 or db == None):
             log.error('ERROR: getESSourceItems - input parameters error' + self.log_arguments(internal_essource_id=internal_essource_id))
@@ -2056,7 +2766,7 @@ class Exposed(object):
         cache = self.cache
         cache_session = request.db_cache
 
-        essource_params = cache.get_params(internal_essource_id, cache_session, log)
+        essource_params = cache.get_params(internal_essource_id, verid, cache_session, log)
 
         if essource_params is None:
             external_essource_id = cache.get_external_id(cache_session, internal_essource_id, "es_source", src, log)
@@ -2064,8 +2774,7 @@ class Exposed(object):
             for param in essource_params:
                 param.module_id = internal_essource_id
 
-            cache.put_params(internal_essource_id, essource_params, cache_session, log)
-            print('added to cache')
+            cache.put_params(internal_essource_id, essource_params, verid, cache_session, log)
 
         if essource_params is None:
             return None
@@ -2076,9 +2785,9 @@ class Exposed(object):
         output = schema.dump(resp)
         return output.data
 
-    def getDatasetItems(self, ver=-2, cnf=-2, dstid=-2, db = None, log = None, request = None, src = 0):
-        if (ver==-2 or cnf==-2 or dstid == -2 or db == None):
-            log.error('ERROR: getDatasetItems - input parameters error' + self.log_arguments(cnf=cnf, ver=ver, dstid=dstid))
+    def getDatasetItems(self, ver=-2, cnf=-2, dsid=-2, db = None, log = None, request = None, src = 0):
+        if (ver==-2 or cnf==-2 or dsid == -2 or db == None):
+            log.error('ERROR: getDatasetItems - input parameters error' + self.log_arguments(cnf=cnf, ver=ver, dstid=dsid))
 
 
         cache = self.cache
@@ -2089,7 +2798,7 @@ class Exposed(object):
         if (cnf != -2 and cnf != -1):
             cnf = cache.folMappingDictGetExternal(cnf, src, "cnf", cache_session, log)
 
-        dstid = cache.strMappingDictGetExternal(dstid, src, "dat", cache_session, log)
+        ext_ds_id = cache.get_external_id(cache_session, dsid, "dat", src, log)
 
         version = self.getRequestedVersion(ver, cnf, db, log)
         ver_id = version.id
@@ -2097,21 +2806,22 @@ class Exposed(object):
         #DB Query
         paths = None
 
-        try:
-            paths = self.queries.getDatasetPathids(ver_id, dstid, db, log)
-
-        except:
-            log.error('ERROR: Query getDatasetPathids Error')
+        paths_wrapped = cache.get_datasets_paths(ver_id, dsid, cache_session, log)
+        if paths_wrapped is None:
+            try:
+                paths = self.queries.getDatasetPathids(ver_id, ext_ds_id, db, log)
+                paths_wrapped = []
+            except:
+                log.error('ERROR: Query getDatasetPathids Error')
+                return None
+            for p in paths:
+                p.vid = ver_id
+                p.internal_id = cache.get_internal_id(cache_session, p.id, "pat", src, log)
+                paths_wrapped.append(DatasetsPath(p.internal_id, p.name, p.id_path, dsid, p.pit, p.isEndPath, p.vid))
+            cache.put_datasets_paths(paths, dsid, ver_id, cache_session, log)
+        if paths_wrapped is None:
             return None
-
-#        if (modules == None or templates == None or conf2eds == None):
-#            return None
-
-        for p in paths:
-            p.vid = ver_id
-            p.gid = cache.patMappingDictPut(src, p.id, "pat", cache_session, log)
-
-        resp.children = paths
+        resp.children = paths_wrapped
 
         resp.success = True
         output = schema.dump(resp)
@@ -2148,7 +2858,7 @@ class Exposed(object):
 
         cache = self.cache
         cache_session = request.db_cache
-        
+
         if (cnf != -2 and cnf != -1):
             cnf = cache.folMappingDictGetExternal(cnf, src, "cnf", cache_session, log)
 
@@ -2171,7 +2881,7 @@ class Exposed(object):
             log.error('ERROR: getSummaryItems - input parameters error' + self.log_arguments(cnf=cnf, ver=ver))
 
         cache = self.cache
-        cache_session = request.db_cache      
+        cache_session = request.db_cache
         resp = Response()
         schema = ResponseSummaryItemSchema()
 
@@ -2263,7 +2973,7 @@ class Exposed(object):
             log.error('ERROR: Query getConfStreams/getConfDatasets/getConfStrDatRels/getConfEventContents/getEvCoToStream Error')
             output = schema.dump(resp)
             return output.data
-	
+
 	streams_dict = dict((x.id, x) for x in streams)
         dats_dict = dict((x.id, x) for x in datasets)
 
@@ -2280,7 +2990,7 @@ class Exposed(object):
             pats = self.queries.getPaths(ver_id, db, log)
 
             dprels = self.queries.getAllDatsPatsRels(ver_id, idis, db, log)
-	    
+
 	    #get realations output modules - streams
             oumrels = self.queries.getOumStreamRels(ver_id, str_idis, db, log)
 
@@ -2342,7 +3052,7 @@ class Exposed(object):
 
         for s in streams:
             si = Summaryitem(s.id, s.name,"str", False,'resources/Stream.ico')
-            
+
 	    try:
 
             	if s.id in oum_rels_keys:
@@ -2351,7 +3061,7 @@ class Exposed(object):
 
                     #Check for "HltPrescale" module
                     oumpre = self.queries.getEndPathPrescaleMod(endp_id, db, log)
-            
+
                     if oumpre is not None and len(oumpre) > 0:
 
                         pre_item = EndPathPrescale(s.id)
@@ -2364,7 +3074,7 @@ class Exposed(object):
                         if(preRows_dict.has_key(p_name)):
                             r_i = preRows_dict.get(p_name)
                             param_values = preRows[r_i].children[1].value
-                            values = map(int, re.findall('\d+', param_values)) 
+                            values = map(int, re.findall('\d+', param_values))
 
                             if(not(len(labels) == len(values))):
                                 log.error("PRESCALE ERROR: NOT SAME CARDINALITY")
@@ -2383,13 +3093,13 @@ class Exposed(object):
                         end_path_prescale_dict[s.id] = pre_item
 
             except:
-                log.error('ERROR: End Path Prescales not retreived') 
+                log.error('ERROR: End Path Prescales not retreived')
 
 	    streams_dict[s.id] = si
 
             si.gid = cache.sumMappingDictPut(src, si.id, "str", cache_session, log)
 
-	
+
         ep_pre_keys = end_path_prescale_dict.keys()
 
         for d in datasets:
@@ -2448,7 +3158,7 @@ class Exposed(object):
                                     sp_value = smart_paths[p.name]
                                     smpr = "smart_pre" + "###" + str(sp_value)
                                     pat.values.append(smpr)
-					
+
 				    #--STREAM - END PATH PRESCALE ------------------
 
                                     if streamid in ep_pre_keys:
@@ -2460,7 +3170,7 @@ class Exposed(object):
                                             ep_pre_val = ep_item.prescales[c.name]
                                             pre_value = int(values[i2])*int(ep_pre_val)
                                             new_value = sp_value*pre_value
-                                            
+
                                             sv = c.name + "###" + str(new_value)
                                             pat.values.append(sv)
                                             i2 = i2 + 1
@@ -2472,10 +3182,10 @@ class Exposed(object):
 
                                             pre_value = int(values[i2])
                                             new_value = sp_value*pre_value
-                                            
+
                                             sv = c.name + "###" + str(new_value)
                                             pat.values.append(sv)
-                                            i2 = i2 + 1  
+                                            i2 = i2 + 1
 
 #                                    for c in columns:
 #
@@ -2498,7 +3208,7 @@ class Exposed(object):
 
                             # Put The path with prescales 0
                             else:
-#                                pat_id = str(p.id)+"pat"+str(d.id) #str(d.id) + "pat" 
+#                                pat_id = str(p.id)+"pat"+str(d.id) #str(d.id) + "pat"
                                 pat = Summaryitem(p.id,(p.name),"pat", True,'resources/Path_3.ico')
                                 # pat.gid = sumMap.put(pat, False)
                                 pat.gid = cache.sumMappingDictPut(src, p.id, "pat", cache_session, log,0)
@@ -2526,7 +3236,7 @@ class Exposed(object):
 
                                 paths[pat.gid] = pat
                         else:
-#                            pat_id = str(p.id)+"pat"+str(d.id) #str(d.id) + "pat" 
+#                            pat_id = str(p.id)+"pat"+str(d.id) #str(d.id) + "pat"
                             pat = Summaryitem(p.id, p.name,"pat", True,'resources/Path_3.ico')
                             # pat.gid = sumMap.put(pat, False)
                             pat.gid = cache.sumMappingDictPut(src, p.id, "pat", cache_session, log,0)
@@ -2546,7 +3256,7 @@ class Exposed(object):
 
                                 else:
                                     values = one_values
-				
+
 				#--- END PATH PRESCALES ----------------------------------
                                 if streamid in ep_pre_keys:
                                     # APPLY END PATH PRESCALE
@@ -2557,7 +3267,7 @@ class Exposed(object):
 
                                         ep_pre_val = ep_item.prescales[c.name]
                                         new_value = int(values[i2])*int(ep_pre_val)
-                                        
+
                                         sv = c.name + "###" + str(new_value)
                                         pat.values.append(sv)
                                         i2 = i2 + 1
@@ -2629,11 +3339,11 @@ class Exposed(object):
             return -1
 
         confVer_id = -1
-	
+
         path_tokens = name.split('/')
         last_token = path_tokens[-1]
 
-	
+
         if pattern.match(last_token) is not None:
 
             #There is the VERSION NUMBER
@@ -2645,8 +3355,8 @@ class Exposed(object):
                 msg = 'ERROR: Query getConfigurationByName Error: ' + e.args[0]
                 log.error(msg)
                 return -1
-        
-        else:   
+
+        else:
 
             #NO Version number: the last version is chosen
             try:

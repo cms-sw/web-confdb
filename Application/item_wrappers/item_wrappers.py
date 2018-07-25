@@ -7,8 +7,7 @@
 class Service(object):
 
     def __init__(self, id = 0, template_id = -1, release_id = -1, name = "", s_type = ""):
-        self.id = id
-        self.gid = -1
+        self.internal_id = id
         self.template_id = template_id
         self.release_id = release_id
         self.name = name
@@ -28,8 +27,7 @@ class PathDetails(object):
 class Streamitem(object):
 
     def __init__(self, id = 0, fractodisk = -1, name = "", s_type = ""):
-        self.id = id
-        self.gid = -1
+        self.internal_id = id
         self.name = name
         self.fractodisk = fractodisk
         self.s_type = s_type
@@ -38,8 +36,7 @@ class Streamitem(object):
 class ESModuleDetails(object):
 
     def __init__(self, id = 0, id_templ = -1, name = "", mclass = "", order = -1):
-        self.id = id
-        self.gid = -1
+        self.internal_id = id
         self.id_templ = id_templ
         self.name = name
         self.mclass = mclass
@@ -59,16 +56,14 @@ class OutputModuleDetails(object):
 class GlobalPset(object):
 
     def __init__(self, id = 0, name = "", tracked = -1):
-        self.id = id
-        self.gid = -1
+        self.internal_id = id
         self.name = name
         self.tracked = tracked
 
 class EDSource(object):
 
     def __init__(self, id = 0, id_templ = -1, name = "", tclass = "", order = -1):
-        self.id = id
-        self.gid = -1
+        self.internal_id = id
         self.id_templ = id_templ
         self.name = name
         self.tclass = tclass
@@ -77,8 +72,7 @@ class EDSource(object):
 class ESSource(object):
 
     def __init__(self, id = 0, id_templ = -1, name = "", tclass = "", order = -1):
-        self.id = id
-        self.gid = -1
+        self.internal_id = id
         self.id_templ = id_templ
         self.name = name
         self.tclass = tclass
@@ -181,4 +175,48 @@ class FileVersion(object):
 class EndPathPrescale(object):
     def __init__(self, streamid):
         self.streamid = streamid
-        self.prescales = {}  
+        self.prescales = {}
+
+
+class Path(object):
+
+    def __init__(self, internal_id=0, id_path=0, description="", name="", vid=0, order=0, isEndPath=0):
+        self.internal_id = internal_id
+        self.name = name
+        self.id_path = id_path
+        self.description = description
+        self.vid = vid
+        self.order = order
+        self.isEndPath = isEndPath
+        self.pit = "pat"
+
+
+class EvCoStatement(object):
+
+    def __init__(self, internal_id=0, modulel="", classn="", extran="", processn="", statementtype="",
+                 statementrank=""):
+        self.internal_id = internal_id
+        self.modulel = modulel
+        self.classn = classn
+        self.extran = extran
+        self.processn = processn
+        self.statementtype = statementtype
+        self.statementrank = statementrank
+
+
+class EvcoName(object):
+
+    def __init__(self, internal_id=0, name=""):
+        self.internal_id = internal_id
+        self.name = name
+
+class DatasetsPath(object):
+
+    def __init__(self, internal_id=0, name="", id_path="", dataset_id=0, pit="", isEndPath=0, vid=""):
+        self.internal_id = internal_id
+        self.name = name
+        self.id_path = id_path
+        self.dataset_id = dataset_id
+        self.pit = pit
+        self.isEndPath = isEndPath
+        self.vid = vid

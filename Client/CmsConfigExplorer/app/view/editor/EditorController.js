@@ -133,8 +133,15 @@ Ext.define('CmsConfigExplorer.view.editor.EditorController', {
     onCnfDetailsLoad: function( store, records, successful, eOpts ){
         var det = records[0];
         var name = det.get("name");
+        var vid = det.get("gid");
         this.getViewModel().set( "cnfname", name );
-        
+        var view = this.getView();
+        var sumv = view.lookupReference('summaryview');
+        var detv = view.lookupReference('detailsview');
+        sumv.getViewModel().set("idVer", vid);
+        detv.getViewModel().set("idVer", vid);
+
+
         var link = window.location.origin + window.location.pathname + "#config=" + name;
         this.getViewModel().set('link',link);
         
@@ -176,7 +183,37 @@ Ext.define('CmsConfigExplorer.view.editor.EditorController', {
         cards.setActiveItem(0);
         
     },
-    
+
+    onSave: function (button, e, eOpts) {
+        var cid = this.getViewModel().get("idCnf");
+        var vid = this.getViewModel().get("idVer");
+        var online = this.getViewModel().get("online");
+        var loading = this.lookupReference('loadingtext');
+        loading.setHidden(false);
+
+        var loadinggif = this.lookupReference('loadinggif');
+        loadinggif.setHidden(false);
+        Ext.Ajax.request({
+            url: 'save',
+            method: 'GET',
+            headers: {'Content-Type': 'application/json'},
+             params: {
+                    cid: cid,
+                    vid: vid,
+                    online: online
+                },
+            failure: function (response) {
+                Ext.Msg.alert('Error', response.responseText);
+                console.log(response);
+                loadinggif.setHidden(true);
+                loading.setHidden(true);
+            }, success: function (response) {
+                loadinggif.setHidden(true);
+                loading.setHidden(true);
+            }
+        });
+    },
+
     onLinkClick: function(button){
         
         var link = this.getViewModel().get('link');

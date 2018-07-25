@@ -1,19 +1,27 @@
 
 Ext.define("CmsConfigExplorer.view.streamdataset.StreamTree",{
     extend: "Ext.tree.Panel",
-    
+
     requires:['CmsConfigExplorer.view.streamdataset.StreamTreeController'],
-    
+
     alias: 'widget.streamtree',
-    
+
     controller: "streamdataset-streamtree",
 
     reference: "streamTree",
-    
+
     bind:{
         store:'{streamitems}'
     },
-    
+
+    plugins: {
+        ptype: 'cellediting',
+        clicksToEdit: 2,
+        listeners: {
+            beforeedit: 'onBeforeNodeEdit',
+            edit: 'onNodeEditDone'
+        }
+    },
 //    title: "Stream and Datasets",
     
     header: false,
@@ -102,9 +110,36 @@ Ext.define("CmsConfigExplorer.view.streamdataset.StreamTree",{
             }
         ]
     }],
-    
+    viewConfig: {
+        plugins: [
+            {
+                pluginId: 'ds_drop_plugin',
+                ptype: 'treeviewdragdrop',
+                dragText: 'Drop path here to add to another dataset',
+                dropGroup: 'path',
+                enableDrag: false
+            },
+            {
+                pluginId: 'event_move_plugin',
+                ptype: 'treeviewdragdrop',
+                dragText: 'Move this event config statements node to replace an existing one in another stream',
+                dragGroup: 'event',
+                dropGroup: 'event'
+            }
+        ],
+        listeners: {
+            beforedrop: 'beforeDrop'
+        }
+    },
     columns: [
-        { xtype: 'treecolumn', header: 'Name', dataIndex: 'name', flex: 1, sortable: false }
+        {
+            xtype: 'treecolumn', header: 'Name', dataIndex: 'name', flex: 1, sortable: false,
+            editor: {
+                xtype: 'textfield',
+                selectOnFocus: true,
+                editable: true
+            }
+        }
 
     ]
 });
